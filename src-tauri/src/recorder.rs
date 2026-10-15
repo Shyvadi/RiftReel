@@ -331,6 +331,10 @@ impl Pseudonymizer {
                 .collect(),
         };
         let mut numbered = 0;
+        // Riot IDs as written. Lower-casing can change a name's length (Turkish `İ`
+        // becomes `i̇`), and then a case-insensitive search for the lower-cased form
+        // misses the original, so the sweep looks for both.
+        let mut as_written: Vec<(String, String)> = Vec::new();
         // Players sharing a game name share the pseudonym and differ by tag, as Riot's
         // events (game name only) can't tell them apart either.
         let mut groups: Vec<(String, String, Vec<String>)> = Vec::new();
@@ -370,10 +374,10 @@ impl Pseudonymizer {
                     if let Some(game) = &player.game_name {
                         this.names.insert(fold(game), name.clone());
                         if let Some(real_tag) = &player.tag_line {
-                            this.riot_ids.insert(
-                                format!("{}#{}", fold(game), fold(real_tag)),
-                                format!("{name}#{pseudo_tag}"),
-                            );
+                            let pseudo = format!("{name}#{pseudo_tag}");
+                            as_written.push((format!("{game}#{real_tag}"), pseudo.clone()));
+                            this.riot_ids
+                                .insert(format!("{}#{}", fold(game), fold(real_tag)), pseudo);
                         }
                     }
                     if let Some(summoner) = &player.summoner_name {
@@ -398,6 +402,7 @@ impl Pseudonymizer {
             .iter()
             .map(|(real, pseudo)| (real.clone(), pseudo.clone()))
             .collect();
+        needles.extend(as_written);
         for (player, _) in &this.players {
             if let Some(puuid) = &player.puuid {
                 needles.push((fold(puuid), "<puuid>".to_owned()));
@@ -572,6 +577,74 @@ impl Pseudonymizer {
         }
     }
 
+    /// What `text` would leak: the League client password, a token, a real Riot ID,
+    /// puuid or game ID.
+    fn leak_in(&self, text: &str) -> Option<&'static str> {
+        let folded = text.to_lowercase();
+        if self.secrets.iter().any(|s| text.contains(s.as_str())) {
+            return Some("the League client password");
+        }
+        if JWT.is_match(text) {
+            return Some("a token");
+        }
+        if self.riot_ids.keys().any(|id| folded.contains(id.as_str())) {
+            return Some("a real Riot ID");
+        }
+        let mut puuids = self.players.iter().filter_map(|(p, _)| p.puuid.as_deref());
+        if puuids.any(|p| folded.contains(&fold(p))) {
+            return Some("a puuid");
+        }
+        if self.game_ids.iter().any(|id| text.contains(id.as_str())) {
+            return Some("a real game ID");
+        }
+        None
+    }
+
+    /// Last line of defence after [`Self::apply`]: any string or member name that still
+    /// holds an identifier is replaced with `<redacted>`. Returns where (paths such as
+    /// `playerlist[3].someField`, never the values), so the gap can be fixed.
+    pub fn redact_leftovers(&self, value: &mut Value, path: &str) -> Vec<String> {
+        let mut found = Vec::new();
+        self.redact_into(value, path, &mut found);
+        found
+    }
+
+    fn redact_into(&self, value: &mut Value, path: &str, found: &mut Vec<String>) {
+        match value {
+            Value::String(text) => {
+                if let Some(what) = self.leak_in(text) {
+                    found.push(format!("{path} ({what})"));
+                    *text = "<redacted>".to_owned();
+                }
+            }
+            Value::Array(items) => {
+                for (index, item) in items.iter_mut().enumerate() {
+                    self.redact_into(item, &format!("{path}[{index}]"), found);
+                }
+            }
+            Value::Object(object) => {
+                let keys: Vec<String> = object.keys().cloned().collect();
+                for key in keys {
+                    let (member_path, current) = match self.leak_in(&key) {
+                        None => (format!("{path}.{key}"), key),
+                        Some(what) => {
+                            let renamed = format!("<redacted {}>", found.len() + 1);
+                            found.push(format!("{path}.{renamed} (a member name: {what})"));
+                            if let Some(member) = object.remove(&key) {
+                                object.insert(renamed.clone(), member);
+                            }
+                            (format!("{path}.{renamed}"), renamed)
+                        }
+                    };
+                    if let Some(member) = object.get_mut(&current) {
+                        self.redact_into(member, &member_path, found);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
     /// What `text` (a file about to be written) would leak: a real Riot ID, puuid or game
     /// ID, a secret or token, or an identifier member that should have been dropped.
     pub fn check(&self, file: &str, text: &str) -> Result<(), Leak> {
@@ -581,23 +654,10 @@ impl Pseudonymizer {
                 what,
             })
         };
+        if let Some(what) = self.leak_in(text) {
+            return leak(what);
+        }
         let folded = text.to_lowercase();
-        if self.secrets.iter().any(|s| text.contains(s.as_str())) {
-            return leak("the League client password");
-        }
-        if JWT.is_match(text) {
-            return leak("a token");
-        }
-        if self.riot_ids.keys().any(|id| folded.contains(id.as_str())) {
-            return leak("a real Riot ID");
-        }
-        let puuids = self.players.iter().filter_map(|(p, _)| p.puuid.as_deref());
-        if puuids.map(fold).any(|p| folded.contains(&p)) {
-            return leak("a puuid");
-        }
-        if self.game_ids.iter().any(|id| text.contains(id.as_str())) {
-            return leak("a real game ID");
-        }
         for key in [
             "\"puuid\":",
             "summonerid\":",
@@ -648,6 +708,9 @@ pub struct Recording {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FixtureFiles {
     pub files: Vec<(PathBuf, String)>,
+    /// Where identifiers survived pseudonymisation and were redacted instead (paths,
+    /// never values). Should be empty; anything here is a gap to fix.
+    pub redacted: Vec<String>,
 }
 
 impl FixtureFiles {
@@ -725,32 +788,41 @@ impl Recording {
             .chain(frames.iter());
         let mut pseudo = Pseudonymizer::new(self.activeplayer.as_ref(), payloads, secrets);
 
-        let mut copy = |value: &Option<Value>| {
+        let mut redacted = Vec::new();
+        let mut copy = |value: &Option<Value>, path: &str| {
             value.clone().map(|mut value| {
                 pseudo.apply(&mut value);
+                redacted.extend(pseudo.redact_leftovers(&mut value, path));
                 value
             })
         };
-        let activeplayer = copy(&self.activeplayer).unwrap_or(Value::Null);
-        let activeplayer_error = copy(&self.activeplayer_error);
-        let playerlist = copy(&self.playerlist).unwrap_or(Value::Array(Vec::new()));
-        let mut gamestats = copy(&self.gamestats).unwrap_or_else(|| Value::Object(Map::new()));
+        let activeplayer = copy(&self.activeplayer, "activeplayer").unwrap_or(Value::Null);
+        let activeplayer_error = copy(&self.activeplayer_error, "activeplayerError");
+        let playerlist = copy(&self.playerlist, "playerlist").unwrap_or(Value::Array(Vec::new()));
+        let mut gamestats =
+            copy(&self.gamestats, "gamestats").unwrap_or_else(|| Value::Object(Map::new()));
         // As in the synthetic fixtures: the replayer and fake server fill in the clock.
         if let Some(stats) = gamestats.as_object_mut() {
             stats.insert("gameTime".into(), 0.0.into());
         }
-        let session = copy(&self.lcu_session);
-        let eog = copy(&self.eog);
-        let events: Vec<Value> = self
-            .events
-            .iter()
-            .map(|event| {
-                let mut event = event.clone();
-                pseudo.apply(&mut event);
-                event
-            })
-            .collect();
-        let frames: Vec<String> = self.frames.iter().map(|f| pseudo.apply_frame(f)).collect();
+        let session = copy(&self.lcu_session, "session");
+        let eog = copy(&self.eog, "eog");
+        let mut events = Vec::new();
+        for (index, event) in self.events.iter().enumerate() {
+            let mut event = event.clone();
+            pseudo.apply(&mut event);
+            redacted.extend(pseudo.redact_leftovers(&mut event, &format!("events[{index}]")));
+            events.push(event);
+        }
+        let mut frames = Vec::new();
+        for (index, frame) in self.frames.iter().enumerate() {
+            let mut frame = pseudo.apply_frame(frame);
+            if let Some(what) = pseudo.leak_in(&frame) {
+                redacted.push(format!("frames[{index}] ({what})"));
+                frame = "<redacted>".to_owned();
+            }
+            frames.push(frame);
+        }
 
         let mut description = format!(
             "Recorded {} game on {} with downplayed-dev record",
@@ -796,7 +868,7 @@ impl Recording {
         for (path, text) in &files {
             pseudo.check(&path.display().to_string(), text)?;
         }
-        Ok(FixtureFiles { files })
+        Ok(FixtureFiles { files, redacted })
     }
 }
 
@@ -921,6 +993,8 @@ pub struct Recorded {
     pub files: Vec<PathBuf>,
     pub events: usize,
     pub has_eog: bool,
+    /// See [`FixtureFiles::redacted`].
+    pub redacted: Vec<String>,
 }
 
 /// Records the next match: waits for the Live Client API, records until the game
@@ -975,9 +1049,16 @@ pub async fn record(
                 }
                 if state.dirty && state.last_write.is_none_or(|t| t.elapsed() >= timings.checkpoint) {
                     // Keep recording either way; the final write reports the error.
+                    let reported = state.redacted.clone();
                     if let Err(e) = state.write(out_dir, secret.as_deref()) {
                         progress(format!("checkpoint not written: {e}"));
                         state.last_write = Some(Instant::now());
+                    }
+                    if state.redacted != reported && !state.redacted.is_empty() {
+                        progress(format!(
+                            "redacted identifiers pseudonymisation missed (please report): {}",
+                            state.redacted.join("; ")
+                        ));
                     }
                 }
             }
@@ -993,6 +1074,7 @@ pub async fn record(
         files,
         events: state.recording.events.len(),
         has_eog: state.recording.eog.is_some(),
+        redacted: state.redacted.clone(),
     })
 }
 
@@ -1017,6 +1099,7 @@ struct LoopState {
     stale_eog_seen: bool,
     dirty: bool,
     last_write: Option<Instant>,
+    redacted: Vec<String>,
 }
 
 impl LoopState {
@@ -1200,6 +1283,7 @@ impl LoopState {
         let secrets: Vec<&str> = secret.into_iter().collect();
         let files = self.recording.fixture_files(stem, *started, &secrets)?;
         let written = files.write(out_dir)?;
+        self.redacted = files.redacted;
         self.dirty = false;
         self.last_write = Some(Instant::now());
         Ok(written)
@@ -1590,6 +1674,48 @@ mod tests {
         assert!(pseudo
             .check("x.json", "{\"riotId\":\"Downplayer#DP1\"}")
             .is_ok());
+    }
+
+    #[test]
+    fn identifiers_that_slip_through_are_redacted_not_lost() {
+        let mut recording = real_recording();
+        // A member named after a player: the walk never renames members.
+        recording.activeplayer.as_mut().unwrap()["perPlayer"] = json!({"Faker Fan#XQZ7": 3});
+        let files = recording.fixture_files("odd", at(), &[PASSWORD]).unwrap();
+        assert_eq!(
+            files.redacted,
+            ["activeplayer.perPlayer.<redacted 1> (a member name: a real Riot ID)"]
+        );
+        let fixture: Value = serde_json::from_str(files.get("odd.json").unwrap()).unwrap();
+        assert_eq!(fixture["activeplayer"]["perPlayer"]["<redacted 1>"], 3);
+        assert!(!files
+            .get("odd.json")
+            .unwrap()
+            .to_lowercase()
+            .contains("faker fan"));
+    }
+
+    #[test]
+    fn names_that_change_length_when_lower_cased_are_still_swept() {
+        let mut recording = real_recording();
+        let players = recording.playerlist.as_mut().unwrap();
+        players
+            .as_array_mut()
+            .unwrap()
+            .push(player("İbrahim", "TR1", "CHAOS", "Zed"));
+        // `İ` lower-cases to two characters, so only the name as written matches it.
+        recording.events.push(event(
+            11,
+            "SomethingNew",
+            900.0,
+            json!({"Text": "gg İbrahim#TR1"}),
+        ));
+        let files = recording.fixture_files("tr", at(), &[]).unwrap();
+        assert!(files.redacted.is_empty(), "{:?}", files.redacted);
+        let fixture: Value = serde_json::from_str(files.get("tr.json").unwrap()).unwrap();
+        let last = fixture["events"].as_array().unwrap().last().unwrap();
+        assert_eq!(last["Text"], "gg Player5#DP1");
+        assert_eq!(fixture["playerlist"][6]["riotId"], "Player5#DP1");
     }
 
     #[test]

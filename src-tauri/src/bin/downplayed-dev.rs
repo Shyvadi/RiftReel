@@ -171,6 +171,12 @@ async fn run_record(flags: &Flags) -> Result<(), String> {
     for file in &recorded.files {
         println!("  {}", file.display());
     }
+    if !recorded.redacted.is_empty() {
+        println!(
+            "redacted where pseudonymisation missed identifiers (please report): {}",
+            recorded.redacted.join("; ")
+        );
+    }
     println!(
         "replay: cargo run --bin downplayed-dev -- replay {}",
         recorded.fixture.display()
