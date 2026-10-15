@@ -26,9 +26,13 @@ The files are rewritten every few seconds, so stopping the recorder early keeps 
 had. Raw payloads stay in memory; what's written is pseudonymised consistently across all
 files: you become `Downplayer#DP1`, everyone else `Player1#DP1`, `Player2#DP1`, … in
 `playerlist` order, and names in events that match nobody become `Unknown<n>`. puuids,
-summoner IDs and account IDs are dropped, game IDs become `1` (a real one would look up
-everyone's name), and a file that would still contain a real Riot ID, puuid or the
-League client password isn't written. Review a recording before committing it anyway.
+summoner IDs and account IDs are dropped, and game IDs become `1` wherever they appear
+(a real one would look up everyone's name), including inside strings such as the
+post-game chat's `"<gameId>-eog"`. Credentials are dropped too: the end-of-game block
+carries a post-game chat JWT (`mucJwtDto`, `multiUserChatPassword`) that names your
+account. So are profile icons and summoner level/XP. A file that would still contain a
+real Riot ID, puuid, game ID, token or the League client password isn't written. Review
+a recording before committing it anyway.
 
 `downplayed-dev replay` uses the `lcu/` files of a fixture when they exist, so the result
 comes from the end-of-game stats (`--json` shows `resultSource`).

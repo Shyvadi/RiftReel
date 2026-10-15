@@ -17,6 +17,7 @@ use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use regex::Regex;
@@ -91,14 +92,34 @@ const VOCABULARY_KEYS: [&str; 22] = [
     "name",
 ];
 
+/// Summoner (account) progression in the end-of-game block, as opposed to gameplay.
+const ACCOUNT_KEYS: [&str; 8] = [
+    "summonerlevel",
+    "currentlevel",
+    "previouslevel",
+    "experiencetotal",
+    "previousxptotal",
+    "nextlevelxp",
+    "prelevelupexperiencetotal",
+    "prelevelupnextlevelxp",
+];
+
 fn is_dropped_key(key: &str) -> bool {
     key.ends_with("puuid")
         || key.ends_with("summonerid")
         || key.ends_with("accountid")
         || key == "playerid"
-        || key == "password"
-        || key.contains("token")
+        // Credentials, e.g. the post-game chat's JWT (`mucJwtDto`, `multiUserChatPassword`).
+        || ["password", "token", "jwt", "secret"].iter().any(|word| key.contains(word))
+        // Account details that single a player out: profile icon, summoner level and XP.
+        || key.ends_with("iconid")
+        || ACCOUNT_KEYS.contains(&key)
 }
+
+/// A JSON Web Token anywhere in a string.
+static JWT: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*").expect("valid JWT regex")
+});
 
 fn is_game_id_key(key: &str) -> bool {
     key.ends_with("gameid")
@@ -237,7 +258,11 @@ pub struct Pseudonymizer {
     players: Vec<(RealPlayer, String)>,
     /// Names in name fields that matched nobody.
     unknown: HashMap<String, String>,
-    /// Real Riot IDs, puuids and secrets: replaced wherever they appear inside a string.
+    /// Real game IDs (from `gameId` members). They also turn up inside other strings,
+    /// such as the post-game chat's `"<gameId>-eog"`.
+    game_ids: Vec<String>,
+    /// Real Riot IDs, puuids, game IDs and secrets: replaced wherever they appear inside
+    /// a string.
     sweep: Option<Regex>,
     sweep_with: HashMap<String, String>,
     secrets: Vec<String>,
@@ -253,6 +278,7 @@ impl Pseudonymizer {
         secrets: &[&str],
     ) -> Self {
         let mut found: Vec<RealPlayer> = Vec::new();
+        let mut game_ids: Vec<String> = Vec::new();
         let mut add = |mut player: RealPlayer, is_local: bool| {
             player.local |= is_local;
             match found.iter_mut().find(|p| p.same_as(&player)) {
@@ -270,6 +296,20 @@ impl Pseudonymizer {
                 if let Some(player) = RealPlayer::from_object(object) {
                     add(player, false);
                 }
+                for (key, value) in object {
+                    if !is_game_id_key(&key.to_ascii_lowercase()) {
+                        continue;
+                    }
+                    let id = match value {
+                        Value::Number(n) => n.to_string(),
+                        Value::String(s) => s.trim().to_owned(),
+                        _ => continue,
+                    };
+                    // Too short to be a real one, and would match everywhere.
+                    if id.len() >= 4 && !game_ids.contains(&id) {
+                        game_ids.push(id);
+                    }
+                }
             });
         }
         // The local player first, everyone else in the order the payloads list them.
@@ -281,6 +321,7 @@ impl Pseudonymizer {
             internal_names: HashMap::new(),
             players: Vec::new(),
             unknown: HashMap::new(),
+            game_ids,
             sweep: None,
             sweep_with: HashMap::new(),
             secrets: secrets
@@ -362,6 +403,9 @@ impl Pseudonymizer {
                 needles.push((fold(puuid), "<puuid>".to_owned()));
             }
         }
+        for id in &this.game_ids {
+            needles.push((fold(id), PSEUDO_GAME_ID.to_string()));
+        }
         for secret in &this.secrets {
             needles.push((fold(secret), "<redacted>".to_owned()));
         }
@@ -407,10 +451,12 @@ impl Pseudonymizer {
         match value {
             Value::Object(object) => {
                 let tag = RealPlayer::from_object(object).map(|p| self.tag_of(&p));
+                // End-of-game players: `level` is the summoner level there.
+                let account_level = object.contains_key("isLocalPlayer");
                 let keys: Vec<String> = object.keys().cloned().collect();
                 for key in keys {
                     let folded = key.to_ascii_lowercase();
-                    if is_dropped_key(&folded) {
+                    if is_dropped_key(&folded) || (account_level && folded == "level") {
                         object.remove(&key);
                         continue;
                     }
@@ -449,6 +495,12 @@ impl Pseudonymizer {
                     }
                 }
                 *text = replaced;
+            }
+            Value::Number(number) => {
+                let game_id = self.game_ids.contains(&number.to_string());
+                if game_id {
+                    *value = PSEUDO_GAME_ID.into();
+                }
             }
             _ => {}
         }
@@ -506,21 +558,22 @@ impl Pseudonymizer {
     }
 
     fn swept(&self, text: &str) -> String {
+        let text = JWT.replace_all(text, "<redacted>");
         match &self.sweep {
-            Some(sweep) if sweep.is_match(text) => sweep
-                .replace_all(text, |caps: &regex::Captures<'_>| {
+            Some(sweep) if sweep.is_match(&text) => sweep
+                .replace_all(&text, |caps: &regex::Captures<'_>| {
                     self.sweep_with
                         .get(&fold(&caps[0]))
                         .cloned()
                         .unwrap_or_default()
                 })
                 .into_owned(),
-            _ => text.to_owned(),
+            _ => text.into_owned(),
         }
     }
 
-    /// What `text` (a file about to be written) would leak: a real Riot ID, a puuid, a
-    /// secret, or an identifier member that should have been dropped.
+    /// What `text` (a file about to be written) would leak: a real Riot ID, puuid or game
+    /// ID, a secret or token, or an identifier member that should have been dropped.
     pub fn check(&self, file: &str, text: &str) -> Result<(), Leak> {
         let leak = |what| {
             Err(Leak {
@@ -532,6 +585,9 @@ impl Pseudonymizer {
         if self.secrets.iter().any(|s| text.contains(s.as_str())) {
             return leak("the League client password");
         }
+        if JWT.is_match(text) {
+            return leak("a token");
+        }
         if self.riot_ids.keys().any(|id| folded.contains(id.as_str())) {
             return leak("a real Riot ID");
         }
@@ -539,9 +595,18 @@ impl Pseudonymizer {
         if puuids.map(fold).any(|p| folded.contains(&p)) {
             return leak("a puuid");
         }
-        for key in ["\"puuid\"", "summonerid\"", "accountid\""] {
+        if self.game_ids.iter().any(|id| text.contains(id.as_str())) {
+            return leak("a real game ID");
+        }
+        for key in [
+            "\"puuid\":",
+            "summonerid\":",
+            "accountid\":",
+            "password\":",
+            "jwt\":",
+        ] {
             if folded.contains(key) {
-                return leak("a puuid, summoner ID or account ID member");
+                return leak("an identifier or credential member");
             }
         }
         Ok(())
@@ -1041,7 +1106,10 @@ impl LoopState {
         if let Ok(phase) = lcu.get_gameflow_phase().await {
             self.phase = Some(phase);
         }
-        let in_game = self.started.is_some() && self.live_closed.is_none();
+        let post_game = self.phase.as_ref().is_some_and(GameflowPhase::is_post_game);
+        // The session as it was during the game, not the end-of-game screen's.
+        let in_game =
+            self.started.is_some() && self.live_closed.is_none() && !self.game_ended && !post_game;
         if in_game {
             if self.session_polls.is_multiple_of(30) {
                 if let Ok(session) = lcu.get_json::<Value>("/lol-gameflow/v1/session").await {
@@ -1053,7 +1121,6 @@ impl LoopState {
             }
             self.session_polls += 1;
         }
-        let post_game = self.phase.as_ref().is_some_and(GameflowPhase::is_post_game);
         if self.started.is_some() && (post_game || self.live_closed.is_some()) {
             if let Ok(eog) = lcu
                 .get_json::<Value>("/lol-end-of-game/v1/eog-stats-block")
@@ -1149,6 +1216,8 @@ mod tests {
     use crate::tracker::session::{ResultSource, SessionConfig};
 
     const PASSWORD: &str = "Lcu-Pa55word_zQ9";
+    /// Shaped like the post-game chat token the real end-of-game block carries.
+    const CHAT_JWT: &str = "eyJraWQiOiIxIn0.eyJzdWIiOiJyZWFsLWFjY291bnQifQ.c2lnbmF0dXJlLWJ5dGVz";
     const PUUID_ME: &str =
         "c0ffee00-1111-2222-3333-444455556666-local-player-puuid-0000000000000000000";
     const PUUID_YASUO: &str =
@@ -1197,7 +1266,10 @@ mod tests {
         let (me, me_tag, _, _) = REAL[0];
         let mut local = eog_player(me, me_tag, "Shyvana", PUUID_ME);
         local["isLocalPlayer"] = true.into();
-        local["stats"] = json!({"CHAMPIONS_KILLED": 2, "NUM_DEATHS": 1, "ASSISTS": 1, "WIN": 1});
+        local["stats"] =
+            json!({"CHAMPIONS_KILLED": 2, "NUM_DEATHS": 1, "ASSISTS": 1, "WIN": 1, "LEVEL": 18});
+        local["level"] = 1055.into();
+        local["note"] = format!("chat token {CHAT_JWT}").into();
         Recording {
             activeplayer: Some(json!({
                 "riotId": "Faker Fan#XQZ7", "riotIdGameName": "Faker Fan", "riotIdTagLine": "XQZ7",
@@ -1241,6 +1313,9 @@ mod tests {
             eog: Some(json!({
                 "gameId": 7_123_456_789u64, "reportGameId": 7_123_456_789u64, "accountId": 99, "gameLength": 1801,
                 "gameMode": "CLASSIC", "queueType": "RANKED_SOLO_5x5",
+                "currentLevel": 1055, "previousLevel": 1055, "experienceTotal": 1711,
+                "mucJwtDto": {"channelClaim": "7123456789-eog", "jwt": CHAT_JWT, "targetRegion": "na1"},
+                "multiUserChatId": "7123456789-eog", "multiUserChatPassword": CHAT_JWT,
                 "localPlayer": local,
                 "teams": [
                     {"teamId": 100, "isPlayerTeam": true, "isWinningTeam": true, "name": "", "players": [eog_player("Yasuo", "QWV3", "Yasuo", PUUID_YASUO)]},
@@ -1326,6 +1401,10 @@ mod tests {
                 "7123456789",
                 "4242424242",
                 "lcu-pa55word_zq9",
+                "eyjrawq",
+                "1055",
+                "1711",
+                "mucjwtdto",
             ] {
                 assert!(
                     !lower.contains(secret),
@@ -1337,7 +1416,9 @@ mod tests {
                 "\"puuid\"",
                 "\"summonerid\"",
                 "\"accountid\"",
-                "\"password\"",
+                "password\"",
+                "\"jwt\"",
+                "\"profileiconid\"",
             ] {
                 assert!(!lower.contains(key), "{key} kept in {}", path.display());
             }
@@ -1429,6 +1510,19 @@ mod tests {
         assert_eq!(eog["teams"][1]["players"][0]["riotIdTagLine"], "DP1");
         assert_eq!(eog["teams"][1]["players"][0]["riotIdGameName"], "Player4");
         assert_eq!(eog["reportGameId"], 1);
+        assert_eq!(
+            eog["multiUserChatId"], "1-eog",
+            "the game ID inside a string"
+        );
+        assert!(eog.get("mucJwtDto").is_none() && eog.get("multiUserChatPassword").is_none());
+        assert!(eog.get("currentLevel").is_none() && eog.get("experienceTotal").is_none());
+        assert!(eog["localPlayer"].get("level").is_none(), "summoner level");
+        assert!(eog["localPlayer"].get("profileIconId").is_none());
+        assert_eq!(
+            eog["localPlayer"]["stats"]["LEVEL"], 18,
+            "champion level stays"
+        );
+        assert_eq!(eog["localPlayer"]["note"], "chat token <redacted>");
     }
 
     #[test]
@@ -1477,13 +1571,22 @@ mod tests {
     #[test]
     fn a_leak_refuses_to_write() {
         let recording = real_recording();
-        let payloads = [recording.playerlist.as_ref().unwrap()];
+        let payloads = [
+            recording.playerlist.as_ref().unwrap(),
+            recording.lcu_session.as_ref().unwrap(),
+        ];
         let pseudo = Pseudonymizer::new(recording.activeplayer.as_ref(), payloads, &[PASSWORD]);
         assert!(pseudo
             .check("x.json", "{\"note\":\"gg faker fan#xqz7\"}")
             .is_err());
         assert!(pseudo.check("x.json", PASSWORD).is_err());
         assert!(pseudo.check("x.json", "{\"summonerId\":1}").is_err());
+        assert!(pseudo
+            .check("x.json", &format!("{{\"t\":\"{CHAT_JWT}\"}}"))
+            .is_err());
+        assert!(pseudo
+            .check("x.json", "{\"chat\":\"7123456789-eog\"}")
+            .is_err());
         assert!(pseudo
             .check("x.json", "{\"riotId\":\"Downplayer#DP1\"}")
             .is_ok());

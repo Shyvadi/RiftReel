@@ -19,6 +19,8 @@ use support::{eventually, fixture_path, FakeLcuServer, FakeLiveServer, TestPki};
 
 const PASSWORD: &str = "Rec0rder-test-Pa55";
 const PUUID: &str = "1e0e2c1a-5d8e-4bc4-9f0a-recorder-test-local-puuid-000000000000000000000000";
+/// Shaped like the post-game chat token in the real end-of-game block.
+const CHAT_JWT: &str = "eyJraWQiOiIxIn0.eyJzdWIiOiJyZWFsLWFjY291bnQifQ.c2lnbmF0dXJlLWJ5dGVz";
 
 /// ranked_win with real-looking players instead of the synthetic names.
 const RENAMES: [(&str, &str); 12] = [
@@ -134,6 +136,9 @@ async fn records_a_match_as_a_pseudonymised_fixture() {
         local["riotIdGameName"] = "Faker Fan".into();
         local["riotIdTagLine"] = "XQZ7".into();
         eog["accountId"] = 4242.into();
+        eog["mucJwtDto"] = json!({"channelClaim": "5123456789-eog", "jwt": CHAT_JWT});
+        eog["multiUserChatId"] = "5123456789-eog".into();
+        eog["multiUserChatPassword"] = CHAT_JWT.into();
     });
     let dir = temp_dir("match");
     let (recorded, lines) = record_match(
@@ -182,7 +187,7 @@ async fn records_a_match_as_a_pseudonymised_fixture() {
                 path.display()
             );
         }
-        for secret in [PASSWORD, PUUID, "5123456789"] {
+        for secret in [PASSWORD, PUUID, "5123456789", CHAT_JWT] {
             assert!(
                 !text.contains(secret),
                 "{secret} leaked into {}",
