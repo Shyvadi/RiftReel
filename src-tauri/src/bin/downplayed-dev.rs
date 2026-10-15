@@ -5,11 +5,12 @@
 //!     Run a Live Client fixture through the tracker and print markers and moments.
 //!     League client files recorded with it (`lcu/<name>.session.json`, `.eog.json`)
 //!     are used too, so the result comes from the end-of-game stats when they exist.
-//! downplayed-dev record <out-dir>
-//!     Wait for the next game and record it as a fixture in <out-dir>: `<name>.json`
-//!     plus `lcu/<name>.{session,eog,frames}.json` from the League client. Player
-//!     names are pseudonymised (`Downplayer#DP1` is you). Files are rewritten every few
-//!     seconds; it stops by itself after the end-of-game screen.
+//! downplayed-dev record [out-dir]
+//!     Wait for the next game and record it as a fixture in <out-dir> (default: the
+//!     `recordings` folder the Downplayed window lists): `<name>.json` plus
+//!     `lcu/<name>.{session,eog,frames}.json` from the League client. Player names are
+//!     pseudonymised (`Downplayer#DP1` is you). Files are rewritten every few seconds;
+//!     it stops by itself after the end-of-game screen.
 //! downplayed-dev lcu
 //!     Find the running League client, print its gameflow phase and queue, then
 //!     follow phase changes over its WebSocket (Ctrl+C to stop).
@@ -25,7 +26,7 @@
 //! marks your team's objectives. Set `DOWNPLAYED_LOG=debug` for (scrubbed) diagnostics
 //! on stderr.
 
-use std::path::Path;
+use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::Instant;
 
@@ -34,13 +35,14 @@ use downplayed_lib::league::live::{LiveClient, EVENT_POLL_INTERVAL};
 use downplayed_lib::logging;
 use downplayed_lib::recorder::{self, RecorderTimings};
 use downplayed_lib::replay::{self, clock, render_text, Fixture, LcuRecording};
+use downplayed_lib::settings::AppPaths;
 use downplayed_lib::tracker::machine::EndReason;
 use downplayed_lib::tracker::normalize::{MarkerChange, MarkerConfig};
 use downplayed_lib::tracker::session::{MatchSession, SessionConfig};
 
 const USAGE: &str = "usage:
   downplayed-dev replay <fixture.json> [--extras] [--team] [--json]
-  downplayed-dev record <out-dir>
+  downplayed-dev record [out-dir]
   downplayed-dev lcu
   downplayed-dev live [--extras] [--team]
   downplayed-dev eog";
@@ -135,12 +137,10 @@ fn run_replay(flags: &Flags) -> Result<(), String> {
 }
 
 async fn run_record(flags: &Flags) -> Result<(), String> {
-    let out_dir = Path::new(
-        flags
-            .positional
-            .first()
-            .ok_or("record needs an output directory")?,
-    );
+    let out_dir = match flags.positional.first() {
+        Some(dir) => PathBuf::from(dir),
+        None => AppPaths::resolve().recordings_dir,
+    };
     let live = LiveClient::new().map_err(|e| e.to_string())?;
     let lcu = match client::discover() {
         Ok(creds) => Some(LcuClient::new(creds).map_err(|e| e.to_string())?),
@@ -153,7 +153,7 @@ async fn run_record(flags: &Flags) -> Result<(), String> {
     let recorded = recorder::record(
         &live,
         lcu.as_ref(),
-        out_dir,
+        &out_dir,
         &RecorderTimings::default(),
         |line| println!("[{:>6.1}s] {line}", start.elapsed().as_secs_f64()),
     )

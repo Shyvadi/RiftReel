@@ -32,6 +32,7 @@ pub struct Settings {
     pub schema: u32,
     pub logging: LoggingSettings,
     pub tracker: TrackerSettings,
+    pub ui: UiSettings,
     pub markers: MarkerSettings,
 }
 
@@ -41,7 +42,23 @@ impl Default for Settings {
             schema: SETTINGS_SCHEMA,
             logging: LoggingSettings::default(),
             tracker: TrackerSettings::default(),
+            ui: UiSettings::default(),
             markers: MarkerSettings::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct UiSettings {
+    /// Open the window on a match's review when it ends (never while the game runs).
+    pub open_review_after_game: bool,
+}
+
+impl Default for UiSettings {
+    fn default() -> Self {
+        Self {
+            open_review_after_game: true,
         }
     }
 }
@@ -310,11 +327,16 @@ impl Settings {
 pub struct AppPaths {
     pub settings_file: PathBuf,
     pub log_dir: PathBuf,
+    /// One folder per finished match, each with its `match.json` (doc 03 §7).
+    pub matches_dir: PathBuf,
+    /// Where `downplayed-dev record` saves recordings by default; the window lists them.
+    pub recordings_dir: PathBuf,
 }
 
 impl AppPaths {
-    /// `%APPDATA%\Downplayed\settings.toml` and `%LOCALAPPDATA%\Downplayed\logs`.
-    /// `DOWNPLAYED_HOME` puts everything under one folder instead (development).
+    /// `%APPDATA%\Downplayed\settings.toml`; logs, matches and recordings under
+    /// `%LOCALAPPDATA%\Downplayed`. `DOWNPLAYED_HOME` puts everything under one folder
+    /// instead (development).
     pub fn resolve() -> Self {
         if let Some(home) = std::env::var_os("DOWNPLAYED_HOME").filter(|h| !h.is_empty()) {
             return Self::under(PathBuf::from(home));
@@ -328,14 +350,23 @@ impl AppPaths {
             .join("Downplayed");
         Self {
             settings_file: config_dir.join("settings.toml"),
-            log_dir: data_dir.join("logs"),
+            ..Self::data_under(&data_dir)
         }
     }
 
     pub fn under(root: PathBuf) -> Self {
         Self {
             settings_file: root.join("settings.toml"),
-            log_dir: root.join("logs"),
+            ..Self::data_under(&root)
+        }
+    }
+
+    fn data_under(data_dir: &Path) -> Self {
+        Self {
+            settings_file: PathBuf::new(),
+            log_dir: data_dir.join("logs"),
+            matches_dir: data_dir.join("library").join("League of Legends"),
+            recordings_dir: data_dir.join("recordings"),
         }
     }
 }
@@ -400,6 +431,14 @@ mod tests {
         );
         assert!(config.session.markers.include_team);
         assert!(settings.tracker.use_league_client);
+    }
+
+    #[test]
+    fn the_review_opens_after_games_unless_turned_off() {
+        assert!(Settings::default().ui.open_review_after_game);
+        assert!(Settings::default().to_toml().contains("[ui]"));
+        let settings = Settings::from_toml("[ui]\nopen_review_after_game = false\n").unwrap();
+        assert!(!settings.ui.open_review_after_game);
     }
 
     #[test]

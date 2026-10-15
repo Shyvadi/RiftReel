@@ -2,7 +2,7 @@
 
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder, Wry};
+use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder, Wry};
 
 use crate::tracker::machine::TrackerState;
 use crate::tracker::runtime::TrackerStatus;
@@ -65,6 +65,19 @@ pub fn show_main_window(app: &AppHandle) {
         return;
     }
     create_main_window(app, true);
+}
+
+/// Switches an open window to a match's review and brings it up. Returns `false` when
+/// no window is open.
+pub fn show_match(app: &AppHandle, id: &str) -> bool {
+    let Some(window) = app.get_webview_window(MAIN_WINDOW) else {
+        return false;
+    };
+    let _ = window.emit("open-match", id);
+    let _ = window.unminimize();
+    let _ = window.show();
+    let _ = window.set_focus();
+    true
 }
 
 /// Creates the window. Invisible windows exist for smoke tests (the page still loads).

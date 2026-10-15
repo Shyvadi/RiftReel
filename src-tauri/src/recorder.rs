@@ -853,7 +853,7 @@ fn utc_stamp(time: SystemTime) -> String {
     format!("{}-{hour:02}{minute:02}", date.replace('-', ""))
 }
 
-fn utc_parts(time: SystemTime) -> (String, u64, u64) {
+pub(crate) fn utc_parts(time: SystemTime) -> (String, u64, u64) {
     let secs = time
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())

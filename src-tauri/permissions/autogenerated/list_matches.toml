@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-list-matches"
+description = "Enables the list_matches command without any pre-configured scope."
+commands.allow = ["list_matches"]
+
+[[permission]]
+identifier = "deny-list-matches"
+description = "Denies the list_matches command without any pre-configured scope."
+commands.deny = ["list_matches"]

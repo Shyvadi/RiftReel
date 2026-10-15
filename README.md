@@ -4,10 +4,14 @@ A lightweight, local-first **League of Legends** clip recorder for Windows. It i
 clean-room alternative to Overwolf's Outplayed, with no ads, no telemetry and no
 Overwolf runtime.
 
-Status: **phases 0 and 1 of the [blueprint](docs/03-downplayed-blueprint.md#12-roadmap)**.
-The tray app, settings, scrubbed logging, Riot's local API clients and the highlight
-tracker work. Video capture (phase 2) and the clip library (phase 3) don't exist yet;
-the tracker's capture/library steps are logged no-ops.
+Status: **phases 0 and 1 of the [blueprint](docs/03-downplayed-blueprint.md#12-roadmap)**,
+plus the first piece of phase 3's match view. The tray app, settings, scrubbed logging,
+Riot's local API clients and the highlight tracker work. The window shows whether the
+League client is detected and the tracker is ready, lists every tracked match (saved as
+`match.json`) and every recording, and reviews one: result, K/D/A, a timeline of
+moments and markers. After each game it opens on that game's review, once the game has
+closed. Video capture (phase 2) and clips (phase 3) don't exist yet; the tracker's
+capture step is a logged no-op.
 
 | Doc | What it covers |
 |---|---|
@@ -45,9 +49,9 @@ cargo run --bin downplayed-dev -- replay fixtures/lol/ranked_win.json
 
 `downplayed-dev lcu` follows the running League client's gameflow phase.
 `downplayed-dev live` prints markers from a game in progress (try Practice Tool).
-`downplayed-dev record <out-dir>` records the next game as a pseudonymised fixture (see
-[fixtures/lol/README.md](fixtures/lol/README.md)), and `downplayed-dev eog` prints what
-Downplayed reads from the end-of-game stats.
+`downplayed-dev record` records the next game as a pseudonymised fixture into the
+recordings folder the window lists (see [fixtures/lol/README.md](fixtures/lol/README.md)),
+and `downplayed-dev eog` prints what Downplayed reads from the end-of-game stats.
 
 > **This machine:** Visual Studio 2022 Community has a partial MSVC 14.42 toolset (no
 > headers). `cc-rs` picks it first, so building `ring` fails with "Cannot open include
@@ -61,7 +65,9 @@ Downplayed reads from the end-of-game stats.
 |---|---|
 | Settings | `%APPDATA%\Downplayed\settings.toml` (created on first run; every value optional) |
 | Logs | `%LOCALAPPDATA%\Downplayed\logs\downplayed.log`, 5 × 5 MB rotation, Riot identifiers scrubbed |
-| `DOWNPLAYED_HOME` | Put settings and logs under one folder instead (development) |
+| Matches | `%LOCALAPPDATA%\Downplayed\library\League of Legends\<date>_<time>_<queue>_<champion>\match.json` (UTC), one folder per tracked match |
+| Recordings | `%LOCALAPPDATA%\Downplayed\recordings`, where `downplayed-dev record` saves by default |
+| `DOWNPLAYED_HOME` | Put settings, logs, matches and recordings under one folder instead (development) |
 | `DOWNPLAYED_LOG` | Override the log level, e.g. `debug` |
 | `DOWNPLAYED_OPEN_WINDOW` | Open the window at startup (`hidden`: create it invisible, for smoke tests) |
 

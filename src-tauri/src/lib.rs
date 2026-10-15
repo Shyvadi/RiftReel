@@ -5,6 +5,7 @@
 //! (phase 2) and the library (phase 3) build on top of it.
 
 pub mod league;
+pub mod library;
 pub mod logging;
 pub mod privacy;
 pub mod recorder;

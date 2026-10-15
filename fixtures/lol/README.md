@@ -8,10 +8,12 @@ format.
 ## Recording a match
 
 ```
-cargo run --bin downplayed-dev -- record <out-dir>
+cargo run --bin downplayed-dev -- record [out-dir]
 ```
 
-Start it before or during a game (Practice Tool works). It waits for the Live Client API,
+Without `out-dir` it saves to `%LOCALAPPDATA%\Downplayed\recordings`, which the
+Downplayed window lists next to tracked matches. Start it before or during a game
+(Practice Tool works). It waits for the Live Client API,
 records until the game closes, then waits up to 3 minutes for the League client's
 end-of-game stats and exits after the end-of-game screen. It writes:
 
