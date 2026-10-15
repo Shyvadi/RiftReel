@@ -4,7 +4,7 @@
 mod support;
 
 use std::collections::HashSet;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -21,7 +21,7 @@ use downplayed_lib::tracker::runtime::{
     RuntimeEvent, Timings, TrackerConfig, TrackerRuntime, TrackerStatus,
 };
 use downplayed_lib::tracker::session::{MatchFilters, MatchSummary, ResultSource, SkipReason};
-use support::{load_fixture, load_json, FakeLiveServer, TestPki};
+use support::{eventually, load_fixture, load_json, FakeLiveServer, TestPki};
 
 const WAIT: Duration = Duration::from_secs(10);
 
@@ -31,6 +31,7 @@ struct FakeLcu {
     session: GameflowSession,
     eog: EogStatsBlock,
     eog_ready: AtomicBool,
+    eog_requests: AtomicUsize,
 }
 
 impl FakeLcu {
@@ -39,6 +40,7 @@ impl FakeLcu {
             session: serde_json::from_value(load_json("lol/lcu/ranked_win.session.json")).unwrap(),
             eog: serde_json::from_value(load_json("lol/lcu/ranked_win.eog.json")).unwrap(),
             eog_ready: AtomicBool::new(false),
+            eog_requests: AtomicUsize::new(0),
         })
     }
 }
@@ -54,6 +56,7 @@ impl LeagueClient for FakeLcu {
 
     fn eog_stats_block(&self) -> BoxFuture<'_, Result<EogStatsBlock, LcuError>> {
         Box::pin(async {
+            self.eog_requests.fetch_add(1, Ordering::SeqCst);
             if self.eog_ready.load(Ordering::SeqCst) {
                 Ok(self.eog.clone())
             } else {
@@ -128,11 +131,11 @@ impl Harness {
         })
     }
 
-    async fn wait_for_event(&mut self, id: u64) {
+    async fn wait_for_event(&mut self, id: u64) -> TrackerStatus {
         self.wait_for(&format!("EventID {id}"), |s| {
             s.current.as_ref().and_then(|c| c.last_event_id) == Some(id)
         })
-        .await;
+        .await
     }
 
     async fn summary(&mut self) -> MatchSummary {
@@ -163,9 +166,21 @@ const RANKED_WIN_LABELS: [&str; 13] = [
     "victory",
 ];
 
-#[tokio::test]
-async fn ranked_win_through_a_crash_and_reconnect() {
-    let mut h = Harness::start("ranked_win", Settings::default().tracker_config()).await;
+fn assert_no_duplicate_events(summary: &MatchSummary) {
+    let mut seen = HashSet::new();
+    assert!(
+        summary
+            .markers
+            .iter()
+            .flat_map(|m| &m.riot_event_ids)
+            .all(|id| seen.insert(*id)),
+        "a Riot event produced two markers"
+    );
+}
+
+/// Champ select, into the game, then a crash at 1000 s with the client showing
+/// Reconnect and the game's API down.
+async fn play_until_crash(h: &mut Harness) -> Arc<FakeLcu> {
     let lcu = FakeLcu::ranked_win();
     h.send(RuntimeEvent::LcuConnected(lcu.clone())).await;
     h.phase(GameflowPhase::Lobby).await;
@@ -192,31 +207,59 @@ async fn ranked_win_through_a_crash_and_reconnect() {
     h.server.set_game_time(1000.0);
     h.wait_for_event(12).await;
 
-    // Crash: the game dies, the client shows Reconnect, the game comes back later.
+    // Crash: the game dies and the client shows Reconnect.
     h.server.set_up(false);
     h.phase(GameflowPhase::Reconnect).await;
     h.wait_for("reconnecting", |s| {
         s.reconnecting && s.state == TrackerState::InGame
     })
     .await;
-    tokio::time::sleep(Duration::from_millis(100)).await; // a few failed polls
-    h.server.set_game_time(1300.0);
-    h.server.set_up(true);
-    h.phase(GameflowPhase::InProgress).await;
-    h.wait_for_event(16).await;
-    assert!(!h.status.borrow().reconnecting);
+    lcu
+}
 
-    // Nexus down: GameEnd arrives, the client moves to its end-of-game screens.
+/// Nexus down at 1810 s, then the client's end-of-game screens. The stats aren't
+/// published when PreEndOfGame asks for them, so the runtime has to keep waiting
+/// until EndOfGame.
+async fn finish_with_end_of_game_stats(h: &mut Harness, lcu: &FakeLcu) -> MatchSummary {
     h.server.set_game_time(1810.0);
     h.wait_for("finalizing", |s| s.state == TrackerState::Finalizing)
         .await;
     h.phase(GameflowPhase::WaitingForStats).await;
-    h.phase(GameflowPhase::PreEndOfGame).await; // stats not published yet: keeps waiting
+    h.phase(GameflowPhase::PreEndOfGame).await;
+    assert!(
+        eventually(WAIT, || lcu.eog_requests.load(Ordering::SeqCst) >= 1).await,
+        "end-of-game stats requested at PreEndOfGame"
+    );
+    assert_eq!(
+        h.status.borrow().state,
+        TrackerState::Finalizing,
+        "no stats yet: still waiting"
+    );
     lcu.eog_ready.store(true, Ordering::SeqCst);
     h.server.set_up(false); // the game closes
     h.phase(GameflowPhase::EndOfGame).await;
+    h.summary().await
+}
 
-    let summary = h.summary().await;
+#[tokio::test]
+async fn ranked_win_through_a_crash_and_reconnect() {
+    let mut h = Harness::start("ranked_win", Settings::default().tracker_config()).await;
+    let lcu = play_until_crash(&mut h).await;
+    tokio::time::sleep(Duration::from_millis(100)).await; // polls fail while the game is down
+
+    // The player reconnects: the client reports InProgress while the restarted game is
+    // still loading, so the immediate re-read finds nothing yet...
+    h.phase(GameflowPhase::InProgress).await;
+    h.wait_for("reconnected", |s| {
+        !s.reconnecting && s.state == TrackerState::InGame
+    })
+    .await;
+    // ...then its API answers and events pick up after the cursor.
+    h.server.set_game_time(1300.0);
+    h.server.set_up(true);
+    h.wait_for_event(16).await;
+
+    let summary = finish_with_end_of_game_stats(&mut h, &lcu).await;
     assert_eq!(labels(&summary), RANKED_WIN_LABELS);
     assert_eq!(
         summary.result,
@@ -238,15 +281,7 @@ async fn ranked_win_through_a_crash_and_reconnect() {
     assert_eq!(summary.champion.as_deref(), Some("Shyvana"));
     assert_eq!(summary.duration_s, Some(1803.0));
     assert_eq!(summary.ended, EndReason::GameEnd);
-    let mut seen = HashSet::new();
-    assert!(
-        summary
-            .markers
-            .iter()
-            .flat_map(|m| &m.riot_event_ids)
-            .all(|id| seen.insert(*id)),
-        "duplicate markers"
-    );
+    assert_no_duplicate_events(&summary);
     assert!(
         summary.markers.iter().all(|m| m.video_time_s.is_some()),
         "clock was synced"
@@ -259,6 +294,34 @@ async fn ranked_win_through_a_crash_and_reconnect() {
         Some(Some(GameResult::Win))
     );
     assert!(status.current.is_none());
+    assert!(!status.reconnecting);
+}
+
+#[tokio::test]
+async fn events_may_resume_before_the_client_reports_the_reconnect() {
+    let mut h = Harness::start("ranked_win", Settings::default().tracker_config()).await;
+    let lcu = play_until_crash(&mut h).await;
+
+    // The restarted game's API answers while the client still says Reconnect. Polling
+    // carries on and picks up after the cursor.
+    h.server.set_game_time(1300.0);
+    h.server.set_up(true);
+    let status = h.wait_for_event(16).await;
+    assert!(
+        status.reconnecting,
+        "the client hasn't reported InProgress yet"
+    );
+    // The client catches up.
+    h.phase(GameflowPhase::InProgress).await;
+    h.wait_for("reconnected", |s| {
+        !s.reconnecting && s.state == TrackerState::InGame
+    })
+    .await;
+
+    let summary = finish_with_end_of_game_stats(&mut h, &lcu).await;
+    assert_eq!(labels(&summary), RANKED_WIN_LABELS);
+    assert_eq!(summary.result, Some(GameResult::Win));
+    assert_no_duplicate_events(&summary);
 }
 
 #[tokio::test]
@@ -274,6 +337,11 @@ async fn league_client_appearing_mid_match_adds_its_details() {
     lcu.eog_ready.store(true, Ordering::SeqCst);
     h.send(RuntimeEvent::LcuConnected(lcu)).await;
     h.phase(GameflowPhase::InProgress).await;
+    // Let the runtime attach the client before the game ends.
+    h.wait_for("client attached", |s| {
+        s.lcu_connected && s.phase.as_deref() == Some("InProgress")
+    })
+    .await;
     h.server.set_game_time(1810.0);
     h.wait_for("finalizing", |s| s.state == TrackerState::Finalizing)
         .await;

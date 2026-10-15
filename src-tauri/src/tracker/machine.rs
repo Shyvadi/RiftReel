@@ -112,6 +112,8 @@ impl Machine {
             Signal::LcuDisconnected => {
                 self.lcu_connected = false;
                 self.last_phase = None;
+                // Only the client reports reconnects; without it there's nothing to wait for.
+                self.reconnecting = false;
                 vec![]
             }
             Signal::Phase(phase) => {
@@ -194,6 +196,11 @@ impl Machine {
 
     fn go(&mut self, state: TrackerState, effects: Vec<Effect>) -> Vec<Effect> {
         self.state = state;
+        if state != TrackerState::InGame {
+            // A match that ends while the client still says Reconnect is over, not
+            // reconnecting.
+            self.reconnecting = false;
+        }
         effects
     }
 }
@@ -343,5 +350,35 @@ mod tests {
             m.handle(Signal::GameProcessExited),
             [Effect::Finalize(EndReason::ProcessExited)]
         );
+    }
+
+    #[test]
+    fn the_reconnect_flag_never_outlives_the_match_or_the_client() {
+        // The game ends before the player makes it back.
+        let mut m = with_client();
+        phase(&mut m, P::InProgress);
+        phase(&mut m, P::Reconnect);
+        assert!(m.is_reconnecting());
+        assert_eq!(
+            phase(&mut m, P::WaitingForStats),
+            [Effect::Finalize(EndReason::ClientPhase)]
+        );
+        assert!(!m.is_reconnecting());
+        m.handle(Signal::Finalized);
+        assert_eq!((m.state(), m.is_reconnecting()), (Idle, false));
+
+        // Riot's GameEnd arrives while the client still shows Reconnect.
+        let mut m = with_client();
+        phase(&mut m, P::InProgress);
+        phase(&mut m, P::Reconnect);
+        m.handle(Signal::GameEnded);
+        assert!(!m.is_reconnecting());
+
+        // The client itself goes away mid-reconnect.
+        let mut m = with_client();
+        phase(&mut m, P::InProgress);
+        phase(&mut m, P::Reconnect);
+        m.handle(Signal::LcuDisconnected);
+        assert_eq!((m.state(), m.is_reconnecting()), (InGame, false));
     }
 }

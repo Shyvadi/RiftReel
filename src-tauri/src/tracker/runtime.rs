@@ -212,11 +212,16 @@ impl TrackerRuntime {
     }
 
     async fn signal(&mut self, signal: Signal) {
-        let before = self.machine.state();
+        let before = (self.machine.state(), self.machine.is_reconnecting());
         let effects = self.machine.handle(signal);
-        let after = self.machine.state();
+        let after = (self.machine.state(), self.machine.is_reconnecting());
+        if before.0 != after.0 {
+            tracing::info!(from = ?before.0, to = ?after.0, "tracker state");
+        }
         if before != after {
-            tracing::info!(from = ?before, to = ?after, "tracker state");
+            // The effects below can wait on network I/O; publish the new state now
+            // rather than after them.
+            self.publish();
         }
         for effect in effects {
             match effect {
