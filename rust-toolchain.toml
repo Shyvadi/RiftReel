@@ -1,0 +1,5 @@
+# Tauri 2.12 requires Rust 1.90 (its declared rust-version). Pinned so the repo does
+# not depend on whatever `stable` happens to be installed (it is 1.67 on the dev box).
+[toolchain]
+channel = "1.90.0"
+components = ["rustfmt", "clippy"]

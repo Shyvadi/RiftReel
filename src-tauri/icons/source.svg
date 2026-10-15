@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <!-- Downplayed mark: a play triangle turned downward over a baseline. Original artwork. -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#1d2433"/>
+      <stop offset="1" stop-color="#0d1017"/>
+    </linearGradient>
+    <linearGradient id="fg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#6ff2dc"/>
+      <stop offset="1" stop-color="#14b8a6"/>
+    </linearGradient>
+  </defs>
+  <rect x="32" y="32" width="960" height="960" rx="216" fill="url(#bg)"/>
+  <path d="M300 300 H724 Q768 300 746 338 L548 680 Q512 742 476 680 L278 338 Q256 300 300 300 Z" fill="url(#fg)"/>
+  <rect x="312" y="776" width="400" height="60" rx="30" fill="#6ff2dc"/>
+</svg>

@@ -1,0 +1,24 @@
+ARAM loss on Howling Abyss (synthetic): triple kill, turret, three deaths, defeat
+mode ARAM · champion Lux · team CHAOS · 17 events
+
+Markers
+   id      time  type            label                 pre/post  riot ids
+    1   01:35.4  kill            kill                      12/8  2
+    2   02:40.2  death           death                     12/3  4
+    3   03:50.7  assist          assist                    12/8  5
+    4   03:52.1  kill            kill                      12/8  6
+    5   03:54.0  kill            double_kill               12/8  7,8
+    6   03:56.5  kill            triple_kill               12/8  9,10
+    7   06:50.0  turret_kill     turret_kill               10/5  11
+    8   08:32.3  death           death                     12/3  12
+    9   11:41.9  death           death                     12/3  14
+
+Moments
+    1  01:23.4–01:43.4   20.0 s  kill            markers 1
+    2  02:28.2–02:43.2   15.0 s  death           markers 2
+    3  03:38.7–04:04.5   25.8 s  triple_kill     markers 3,4,5,6
+    4  06:40.0–06:55.0   15.0 s  turret_kill     markers 7
+    5  08:20.3–08:35.3   15.0 s  death           markers 8
+    6  11:29.9–11:44.9   15.0 s  death           markers 9
+
+Result Lose · K/D/A 4/3/1

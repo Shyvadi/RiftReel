@@ -1,0 +1,16 @@
+{
+  "gameClient": {"observerServerIp": "", "observerServerPort": 0, "running": true, "serverIp": "", "serverPort": 0, "visible": true},
+  "gameData": {
+    "gameId": 5123456789,
+    "gameName": "",
+    "isCustomGame": false,
+    "password": "",
+    "playerChampionSelections": [],
+    "queue": {"id": 420, "gameMode": "CLASSIC", "type": "RANKED_SOLO_5x5", "description": "Ranked Solo/Duo", "isRanked": true, "mapId": 11},
+    "spectatorsAllowed": false,
+    "teamOne": [],
+    "teamTwo": []
+  },
+  "map": {"id": 11, "gameMode": "CLASSIC", "name": "Summoner's Rift"},
+  "phase": "InProgress"
+}

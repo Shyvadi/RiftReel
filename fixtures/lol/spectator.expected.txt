@@ -1,0 +1,3 @@
+Spectating someone else's game (synthetic): no active player, so nothing is tracked
+mode CLASSIC · champion ? · team ? · 5 events
+no active player (spectator/replay): not tracked

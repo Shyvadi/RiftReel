@@ -1,0 +1,25 @@
+{
+  "description": "Spectating someone else's game (synthetic): no active player, so nothing is tracked",
+  "activeplayer": null,
+  "activeplayerError": {"errorCode": "RESOURCE_NOT_FOUND", "httpStatus": 404, "implementationDetails": {}, "message": "No active player in spectator mode"},
+  "playerlist": [
+    {"championName": "Shyvana", "isBot": false, "isDead": false, "level": 18, "position": "JUNGLE", "rawChampionName": "game_character_displayname_Shyvana", "riotId": "Downplayer#DP1", "riotIdGameName": "Downplayer", "riotIdTagLine": "DP1", "scores": {"assists": 0, "creepScore": 0, "deaths": 0, "kills": 0, "wardScore": 0.0}, "skinID": 0, "summonerName": "Downplayer#DP1", "team": "ORDER"},
+    {"championName": "Garen", "isBot": false, "isDead": false, "level": 18, "position": "TOP", "rawChampionName": "game_character_displayname_Garen", "riotId": "AllyTop#DP1", "riotIdGameName": "AllyTop", "riotIdTagLine": "DP1", "scores": {"assists": 0, "creepScore": 0, "deaths": 0, "kills": 1, "wardScore": 0.0}, "skinID": 0, "summonerName": "AllyTop#DP1", "team": "ORDER"},
+    {"championName": "Ahri", "isBot": false, "isDead": false, "level": 18, "position": "MIDDLE", "rawChampionName": "game_character_displayname_Ahri", "riotId": "AllyMid#DP1", "riotIdGameName": "AllyMid", "riotIdTagLine": "DP1", "scores": {"assists": 0, "creepScore": 0, "deaths": 1, "kills": 0, "wardScore": 0.0}, "skinID": 0, "summonerName": "AllyMid#DP1", "team": "ORDER"},
+    {"championName": "Jinx", "isBot": false, "isDead": false, "level": 18, "position": "BOTTOM", "rawChampionName": "game_character_displayname_Jinx", "riotId": "AllyBot#DP1", "riotIdGameName": "AllyBot", "riotIdTagLine": "DP1", "scores": {"assists": 0, "creepScore": 0, "deaths": 0, "kills": 0, "wardScore": 0.0}, "skinID": 0, "summonerName": "AllyBot#DP1", "team": "ORDER"},
+    {"championName": "Leona", "isBot": false, "isDead": false, "level": 18, "position": "UTILITY", "rawChampionName": "game_character_displayname_Leona", "riotId": "AllySup#DP1", "riotIdGameName": "AllySup", "riotIdTagLine": "DP1", "scores": {"assists": 0, "creepScore": 0, "deaths": 0, "kills": 0, "wardScore": 0.0}, "skinID": 0, "summonerName": "AllySup#DP1", "team": "ORDER"},
+    {"championName": "Darius", "isBot": false, "isDead": false, "level": 18, "position": "TOP", "rawChampionName": "game_character_displayname_Darius", "riotId": "EnemyTop#DP2", "riotIdGameName": "EnemyTop", "riotIdTagLine": "DP2", "scores": {"assists": 0, "creepScore": 0, "deaths": 1, "kills": 0, "wardScore": 0.0}, "skinID": 0, "summonerName": "EnemyTop#DP2", "team": "CHAOS"},
+    {"championName": "Lee Sin", "isBot": false, "isDead": false, "level": 18, "position": "JUNGLE", "rawChampionName": "game_character_displayname_LeeSin", "riotId": "EnemyJgl#DP2", "riotIdGameName": "EnemyJgl", "riotIdTagLine": "DP2", "scores": {"assists": 0, "creepScore": 0, "deaths": 0, "kills": 1, "wardScore": 0.0}, "skinID": 0, "summonerName": "EnemyJgl#DP2", "team": "CHAOS"},
+    {"championName": "Zed", "isBot": false, "isDead": false, "level": 18, "position": "MIDDLE", "rawChampionName": "game_character_displayname_Zed", "riotId": "EnemyMid#DP2", "riotIdGameName": "EnemyMid", "riotIdTagLine": "DP2", "scores": {"assists": 0, "creepScore": 0, "deaths": 0, "kills": 0, "wardScore": 0.0}, "skinID": 0, "summonerName": "EnemyMid#DP2", "team": "CHAOS"},
+    {"championName": "Caitlyn", "isBot": false, "isDead": false, "level": 18, "position": "BOTTOM", "rawChampionName": "game_character_displayname_Caitlyn", "riotId": "EnemyBot#DP2", "riotIdGameName": "EnemyBot", "riotIdTagLine": "DP2", "scores": {"assists": 0, "creepScore": 0, "deaths": 0, "kills": 0, "wardScore": 0.0}, "skinID": 0, "summonerName": "EnemyBot#DP2", "team": "CHAOS"},
+    {"championName": "Thresh", "isBot": false, "isDead": false, "level": 18, "position": "UTILITY", "rawChampionName": "game_character_displayname_Thresh", "riotId": "EnemySup#DP2", "riotIdGameName": "EnemySup", "riotIdTagLine": "DP2", "scores": {"assists": 0, "creepScore": 0, "deaths": 0, "kills": 0, "wardScore": 0.0}, "skinID": 0, "summonerName": "EnemySup#DP2", "team": "CHAOS"}
+  ],
+  "gamestats": {"gameMode": "CLASSIC", "gameTime": 0.0, "mapName": "Map11", "mapNumber": 11, "mapTerrain": "Default"},
+  "events": [
+    {"EventID": 0, "EventName": "GameStart", "EventTime": 0.04},
+    {"EventID": 1, "EventName": "MinionsSpawning", "EventTime": 65.0},
+    {"EventID": 2, "EventName": "ChampionKill", "EventTime": 201.0, "KillerName": "AllyTop", "VictimName": "EnemyTop", "Assisters": []},
+    {"EventID": 3, "EventName": "FirstBlood", "EventTime": 201.0, "Recipient": "AllyTop"},
+    {"EventID": 4, "EventName": "ChampionKill", "EventTime": 250.5, "KillerName": "EnemyJgl", "VictimName": "AllyMid", "Assisters": []}
+  ]
+}

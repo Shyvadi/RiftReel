@@ -1,0 +1,31 @@
+Pentakill, then a 100-second skirmish of assists (synthetic): multikill relabelling and the 60 s moment cap
+mode CLASSIC · champion Katarina · team ORDER · 24 events
+
+Markers
+   id      time  type            label                 pre/post  riot ids
+    1   16:40.0  kill            kill                      12/8  2
+    2   16:49.0  kill            double_kill               12/8  3,4
+    3   16:58.0  kill            triple_kill               12/8  5,6
+    4   17:07.0  kill            quadra_kill               12/8  7,8
+    5   17:16.0  kill            penta_kill                12/8  9,10
+    6   20:00.0  assist          assist                    12/8  12
+    7   20:10.0  assist          assist                    12/8  13
+    8   20:20.0  assist          assist                    12/8  14
+    9   20:30.0  assist          assist                    12/8  15
+   10   20:40.0  assist          assist                    12/8  16
+   11   20:50.0  assist          assist                    12/8  17
+   12   21:00.0  assist          assist                    12/8  18
+   13   21:10.0  assist          assist                    12/8  19
+   14   21:20.0  assist          assist                    12/8  20
+   15   21:30.0  assist          assist                    12/8  21
+   16   21:40.0  assist          assist                    12/8  22
+   17   25:00.0  victory         victory                   10/1  23
+
+Moments
+    1  16:28.0–17:24.0   56.0 s  penta_kill      markers 1,2,3,4,5
+    2  19:48.0–20:48.0   60.0 s  assist          markers 6,7,8,9,10
+    3  20:38.0–21:38.0   60.0 s  assist          markers 11,12,13,14,15
+    4  21:28.0–21:48.0   20.0 s  assist          markers 16
+    5  24:50.0–25:01.0   11.0 s  victory         markers 17
+
+Result Win · K/D/A 5/0/11

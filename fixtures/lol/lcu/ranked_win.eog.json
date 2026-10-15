@@ -1,0 +1,19 @@
+{
+  "gameId": 5123456789,
+  "gameLength": 1803,
+  "gameMode": "CLASSIC",
+  "gameType": "MATCHED_GAME",
+  "queueType": "RANKED_SOLO_5x5",
+  "gameEndedInEarlySurrender": false,
+  "gameEndedInSurrender": false,
+  "localPlayer": {
+    "championId": 102,
+    "championName": "Shyvana",
+    "teamId": 100,
+    "stats": {"CHAMPIONS_KILLED": 4, "NUM_DEATHS": 2, "ASSISTS": 2, "WIN": 1, "LOSE": 0, "MINIONS_KILLED": 31, "NEUTRAL_MINIONS_KILLED": 178}
+  },
+  "teams": [
+    {"teamId": 100, "isWinningTeam": true, "isPlayerTeam": true},
+    {"teamId": 200, "isWinningTeam": false, "isPlayerTeam": false}
+  ]
+}

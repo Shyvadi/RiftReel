@@ -1,0 +1,50 @@
+[package]
+name = "downplayed"
+version = "0.1.0"
+description = "Lightweight, local-first League of Legends clip recorder"
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+default-run = "downplayed"
+
+[lib]
+name = "downplayed_lib"
+crate-type = ["rlib"]
+
+[[bin]]
+name = "downplayed"
+path = "src/main.rs"
+
+# Developer tool: fixture replay, LCU phase watch, live marker printout.
+[[bin]]
+name = "downplayed-dev"
+path = "src/bin/downplayed-dev.rs"
+
+[build-dependencies]
+tauri-build = { version = "2.7", features = [] }
+
+[dependencies]
+tauri = { version = "2.12", features = ["tray-icon"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync", "net", "io-util"] }
+# TLS is always our own rustls config (Riot root only, ring provider), so no
+# default provider or root store is pulled in here.
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls-no-provider"] }
+# Only to recognise "connection closed" errors (a game process dying mid-request).
+hyper = { version = "1", default-features = false }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+tokio-tungstenite = { version = "0.30", default-features = false, features = ["connect", "handshake", "rustls-tls-webpki-roots"] }
+futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
+base64 = "0.22"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "env-filter", "std", "registry", "ansi"] }
+regex = "1"
+sysinfo = { version = "0.38", default-features = false, features = ["system"] }
+dirs = "6"
+thiserror = "2"
+
+[dev-dependencies]
+rcgen = { version = "0.14", default-features = false, features = ["crypto", "ring", "pem"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "logging", "tls12"] }
