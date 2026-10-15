@@ -1,0 +1,5 @@
+* text=auto
+# Vendored certificates must stay byte-exact (see src-tauri/certs/README.md)
+*.pem -text
+*.png binary
+*.ico binary
