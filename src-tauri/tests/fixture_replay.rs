@@ -2,11 +2,12 @@
 //!
 //! The rendered report of every fixture is compared with `fixtures/lol/*.expected.txt`.
 //! After an intended change, regenerate them with `UPDATE_EXPECTED=1 cargo test --test
-//! fixture_replay` and review the diff.
+//! fixture_replay` and review the diff. Like the command, replays use the League client
+//! files recorded with a fixture (`lcu/<name>.*.json`) when there are any.
 
 mod support;
 
-use downplayed_lib::replay::{render_text, replay, ReplayReport};
+use downplayed_lib::replay::{render_text, replay_with, LcuRecording, ReplayReport};
 use downplayed_lib::tracker::normalize::{GameResult, Kda, MarkerConfig, MarkerKind, MarkerLabel};
 use downplayed_lib::tracker::session::SessionConfig;
 use support::{fixture_path, load_fixture};
@@ -25,7 +26,8 @@ fn config(extras: bool, team: bool) -> SessionConfig {
 }
 
 fn run(name: &str, extras: bool) -> ReplayReport {
-    replay(&load_fixture(name), &config(extras, extras)).unwrap()
+    let lcu = LcuRecording::load_beside(fixture_path(&format!("lol/{name}.json"))).unwrap();
+    replay_with(&load_fixture(name), &lcu, &config(extras, extras)).unwrap()
 }
 
 #[test]
@@ -108,7 +110,7 @@ fn ranked_win_markers_follow_the_spec() {
 
     // Exact Riot EventTime, multikill relabelling, steals, the win.
     assert_eq!(marker(MarkerLabel::Victory).game_time_s, 1802.6);
-    assert_eq!(marker(MarkerLabel::DoubleKill).riot_event_ids, [13, 14]);
+    assert_eq!(marker(MarkerLabel::DoubleKill).riot_event_ids, [14, 15]);
     assert!(marker(MarkerLabel::BaronKill).stolen);
     assert_eq!(summary.result, Some(GameResult::Win));
     assert_eq!(
@@ -120,11 +122,15 @@ fn ranked_win_markers_follow_the_spec() {
         })
     );
 
-    // Defaults are Outplayed's highlight set: no first blood, ace, spree, shutdown, and
-    // only my own objectives.
+    // Defaults are Outplayed's highlight set: no Voidgrubs, first blood, ace, spree,
+    // shutdown, and only my own objectives.
     assert!(summary.markers.iter().all(|m| !matches!(
         m.kind,
-        MarkerKind::FirstBlood | MarkerKind::Ace | MarkerKind::Shutdown | MarkerKind::Spree
+        MarkerKind::Voidgrubs
+            | MarkerKind::FirstBlood
+            | MarkerKind::Ace
+            | MarkerKind::Shutdown
+            | MarkerKind::Spree
     )));
     assert!(summary.markers.iter().all(|m| !m.by_team));
 
@@ -151,6 +157,7 @@ fn ranked_win_extras_add_first_blood_shutdown_and_team_plays() {
         labels.contains(&"rift_herald") && labels.contains(&"ace"),
         "team plays: {labels:?}"
     );
+    assert!(labels.contains(&"voidgrubs"), "{labels:?}");
     let team_ace = summary
         .markers
         .iter()

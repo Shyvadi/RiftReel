@@ -2,7 +2,7 @@
 //!
 //! Every marker is stamped with Riot's `EventTime`, not the time we received it.
 //! Pre/post-roll windows default to Outplayed's observed values; the Downplayed
-//! additions (first blood, ace, shutdown, sprees) are off by default.
+//! additions (Voidgrubs, first blood, ace, shutdown, sprees) are off by default.
 
 use std::collections::{BTreeMap, HashSet};
 
@@ -23,6 +23,8 @@ pub enum MarkerKind {
     InhibitorKill,
     DragonKill,
     RiftHerald,
+    /// Riot's `HordeKill` event, one per Voidgrub.
+    Voidgrubs,
     BaronKill,
     Victory,
     FirstBlood,
@@ -32,7 +34,7 @@ pub enum MarkerKind {
 }
 
 impl MarkerKind {
-    pub const ALL: [MarkerKind; 13] = [
+    pub const ALL: [MarkerKind; 14] = [
         Self::Kill,
         Self::Assist,
         Self::Death,
@@ -40,6 +42,7 @@ impl MarkerKind {
         Self::InhibitorKill,
         Self::DragonKill,
         Self::RiftHerald,
+        Self::Voidgrubs,
         Self::BaronKill,
         Self::Victory,
         Self::FirstBlood,
@@ -57,6 +60,7 @@ impl MarkerKind {
             Self::InhibitorKill => "inhibitor_kill",
             Self::DragonKill => "dragon_kill",
             Self::RiftHerald => "rift_herald",
+            Self::Voidgrubs => "voidgrubs",
             Self::BaronKill => "baron_kill",
             Self::Victory => "victory",
             Self::FirstBlood => "first_blood",
@@ -82,7 +86,7 @@ impl MarkerKind {
             | Self::RiftHerald
             | Self::BaronKill => MarkerWindow::on(10.0, 5.0),
             Self::Victory => MarkerWindow::on(10.0, 1.0),
-            Self::FirstBlood | Self::Ace | Self::Shutdown | Self::Spree => {
+            Self::Voidgrubs | Self::FirstBlood | Self::Ace | Self::Shutdown | Self::Spree => {
                 MarkerWindow::off(10.0, 5.0)
             }
         }
@@ -113,6 +117,7 @@ pub enum MarkerLabel {
     ElderDragon,
     DragonKill,
     RiftHerald,
+    Voidgrubs,
     InhibitorKill,
     TurretKill,
     Assist,
@@ -122,7 +127,7 @@ pub enum MarkerLabel {
 impl MarkerLabel {
     /// Moment labelling priority (doc 02 §B4): penta > quadra > triple > double > kill >
     /// objective > assist > death. The opt-in extras rank between multikills and kills,
-    /// and victory ranks between kills and objectives.
+    /// victory ranks between kills and objectives, and Voidgrubs just below the Herald.
     pub fn priority(self) -> u8 {
         match self {
             Self::PentaKill => 100,
@@ -144,6 +149,7 @@ impl MarkerLabel {
             Self::ElderDragon => 48,
             Self::DragonKill => 46,
             Self::RiftHerald => 44,
+            Self::Voidgrubs => 43,
             Self::InhibitorKill => 42,
             Self::TurretKill => 40,
             Self::Assist => 30,
@@ -172,6 +178,7 @@ impl MarkerLabel {
             Self::ElderDragon => "elder_dragon",
             Self::DragonKill => "dragon_kill",
             Self::RiftHerald => "rift_herald",
+            Self::Voidgrubs => "voidgrubs",
             Self::InhibitorKill => "inhibitor_kill",
             Self::TurretKill => "turret_kill",
             Self::Assist => "assist",
@@ -269,9 +276,11 @@ impl MarkerConfig {
         self.windows.insert(kind, window);
     }
 
-    /// Turns on first blood, ace, shutdown and spree markers.
+    /// Turns on the Downplayed additions: Voidgrubs, first blood, ace, shutdown and
+    /// spree markers.
     pub fn with_extras(mut self) -> Self {
         for kind in [
+            MarkerKind::Voidgrubs,
             MarkerKind::FirstBlood,
             MarkerKind::Ace,
             MarkerKind::Shutdown,
@@ -467,6 +476,13 @@ impl Normalizer {
                 MarkerLabel::RiftHerald,
                 &mut changes,
             ),
+            // Same shape as HeraldKill (KillerName, Assisters, Stolen), one per grub.
+            "HordeKill" => self.on_objective(
+                event,
+                MarkerKind::Voidgrubs,
+                MarkerLabel::Voidgrubs,
+                &mut changes,
+            ),
             "BaronKill" => self.on_objective(
                 event,
                 MarkerKind::BaronKill,
@@ -479,8 +495,7 @@ impl Normalizer {
             | "FirstBrick"
             | "InhibRespawningSoon"
             | "InhibRespawned" => {}
-            // Newer objectives (e.g. Voidgrubs) are deliberately unmapped until their
-            // event names are confirmed from a live dump (doc 03 §4.2).
+            // Event names not confirmed from a live dump stay unmapped (doc 03 §4.2).
             other => {
                 if self.unmapped.insert(other.to_owned()) {
                     tracing::debug!(event = other, "unmapped Live Client event");
@@ -952,8 +967,62 @@ mod tests {
     #[test]
     fn unknown_events_are_ignored() {
         let mut n = normalizer(MarkerConfig::default());
-        assert!(n.push(&objective(1, "HordeKill", 400.0, ME)).is_empty());
+        assert!(n.push(&objective(1, "SomethingNew", 400.0, ME)).is_empty());
         assert!(n.push(&event(2, "InhibRespawned", 500.0)).is_empty());
+    }
+
+    /// Live shape (2026-10-15): `{"EventName":"HordeKill","KillerName":…,"Assisters":[…],"Stolen":"False"}`.
+    fn grub(id: u64, time: f64, killer: &str, stolen: bool) -> RawEvent {
+        RawEvent {
+            stolen: Some(stolen),
+            assisters: vec!["Mate".into()],
+            ..objective(id, "HordeKill", time, killer)
+        }
+    }
+
+    #[test]
+    fn voidgrubs_are_opt_in() {
+        let feed = |n: &mut Normalizer| {
+            n.push(&grub(1, 361.0, ME, false));
+            n.push(&grub(2, 364.5, "Mate", false));
+            n.push(&grub(3, 368.0, ME, true));
+            n.push(&grub(4, 600.0, "Foe", false));
+        };
+        let mut defaults = normalizer(MarkerConfig::default());
+        feed(&mut defaults);
+        assert!(defaults.markers().is_empty(), "off by default");
+        assert!(!MarkerKind::Voidgrubs.default_window().enabled);
+
+        let mut config = MarkerConfig::default();
+        config.set_enabled(MarkerKind::Voidgrubs, true);
+        let mut mine = normalizer(config.clone());
+        feed(&mut mine);
+        assert_eq!(labels(&mine), ["voidgrubs", "voidgrubs"]);
+        assert!(mine
+            .markers()
+            .iter()
+            .all(|m| m.kind == MarkerKind::Voidgrubs && (m.pre_s, m.post_s) == (10.0, 5.0)));
+        assert_eq!(
+            mine.markers()
+                .iter()
+                .map(|m| (m.riot_event_ids[0], m.stolen))
+                .collect::<Vec<_>>(),
+            [(1, false), (3, true)]
+        );
+
+        config.include_team = true;
+        let mut team = normalizer(config);
+        feed(&mut team);
+        let by_team: Vec<_> = team.markers().iter().map(|m| m.by_team).collect();
+        assert_eq!(
+            by_team,
+            [false, true, false],
+            "the enemy's grub is never marked"
+        );
+
+        let mut extras = normalizer(MarkerConfig::default().with_extras());
+        feed(&mut extras);
+        assert_eq!(extras.markers().len(), 2);
     }
 
     #[test]
@@ -967,5 +1036,8 @@ mod tests {
             .windows(2)
             .all(|w| w[0].priority() > w[1].priority()));
         assert!(Kill.priority() > Victory.priority() && Victory.priority() > BaronKill.priority());
+        // Just below the Herald, above every lower objective.
+        assert_eq!(Voidgrubs.priority(), RiftHerald.priority() - 1);
+        assert!(Voidgrubs.priority() > InhibitorKill.priority());
     }
 }

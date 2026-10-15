@@ -12,7 +12,9 @@ use std::path::Path;
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::league::models::{ActivePlayer, EventData, GameStats, Player, RawEvent};
+use crate::league::models::{
+    ActivePlayer, EogStatsBlock, EventData, GameStats, GameflowSession, Player, RawEvent,
+};
 use crate::tracker::machine::EndReason;
 use crate::tracker::session::{MatchSession, MatchSummary, SessionConfig};
 
@@ -113,6 +115,45 @@ impl Fixture {
     }
 }
 
+/// League client payloads recorded with a fixture: `lcu/<name>.session.json` and
+/// `lcu/<name>.eog.json` next to `<name>.json`.
+#[derive(Debug, Clone, Default)]
+pub struct LcuRecording {
+    pub session: Option<GameflowSession>,
+    pub eog: Option<EogStatsBlock>,
+}
+
+impl LcuRecording {
+    /// Whatever exists beside `fixture` (nothing is fine).
+    pub fn load_beside(fixture: impl AsRef<Path>) -> Result<Self, ReplayError> {
+        let fixture = fixture.as_ref();
+        let (Some(dir), Some(stem)) = (fixture.parent(), fixture.file_stem()) else {
+            return Ok(Self::default());
+        };
+        let load = |suffix: &str| -> Result<Option<String>, ReplayError> {
+            let path = dir
+                .join("lcu")
+                .join(format!("{}.{suffix}.json", stem.to_string_lossy()));
+            match std::fs::read_to_string(&path) {
+                Ok(text) => Ok(Some(text)),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+                Err(source) => Err(ReplayError::Read {
+                    path: path.display().to_string(),
+                    source,
+                }),
+            }
+        };
+        Ok(Self {
+            session: load("session")?
+                .map(|text| serde_json::from_str(&text))
+                .transpose()?,
+            eog: load("eog")?
+                .map(|text| serde_json::from_str(&text))
+                .transpose()?,
+        })
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct ReplayReport {
     pub description: String,
@@ -127,7 +168,20 @@ const REPLAY_POLL_S: f64 = 0.5;
 /// Runs a fixture through the tracker the way a live match would: an `eventdata` poll
 /// every 0.5 s of game time, each returning the history so far.
 pub fn replay(fixture: &Fixture, config: &SessionConfig) -> Result<ReplayReport, ReplayError> {
+    replay_with(fixture, &LcuRecording::default(), config)
+}
+
+/// [`replay`], with the League client's gameflow session and end-of-game stats as the
+/// runtime would have them.
+pub fn replay_with(
+    fixture: &Fixture,
+    lcu: &LcuRecording,
+    config: &SessionConfig,
+) -> Result<ReplayReport, ReplayError> {
     let mut session = MatchSession::new(config.clone());
+    if let Some(gameflow) = &lcu.session {
+        session.set_lcu_session(gameflow.clone());
+    }
     session.set_game_stats(&fixture.game_stats()?);
     let spectator = match fixture.active_player()? {
         Some(player) => {
@@ -158,6 +212,9 @@ pub fn replay(fixture: &Fixture, config: &SessionConfig) -> Result<ReplayReport,
         polls += 1;
     }
     session.set_final_players(fixture.players()?);
+    if let Some(eog) = &lcu.eog {
+        session.set_eog(eog.clone());
+    }
     let ended = if events.iter().any(|e| e.event_name == "GameEnd") {
         EndReason::GameEnd
     } else {

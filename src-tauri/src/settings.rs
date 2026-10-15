@@ -403,6 +403,32 @@ mod tests {
     }
 
     #[test]
+    fn voidgrubs_are_off_until_enabled() {
+        let defaults = Settings::default();
+        assert_eq!(
+            defaults
+                .tracker_config()
+                .session
+                .markers
+                .window(MarkerKind::Voidgrubs),
+            MarkerWindow::off(10.0, 5.0)
+        );
+        assert!(defaults.to_toml().contains("[markers.voidgrubs]"));
+
+        let mut settings =
+            Settings::from_toml("[markers.voidgrubs]\nenabled = true\npost_s = 8\n").unwrap();
+        assert!(settings.validate().is_empty());
+        assert_eq!(
+            settings
+                .tracker_config()
+                .session
+                .markers
+                .window(MarkerKind::Voidgrubs),
+            MarkerWindow::on(10.0, 8.0)
+        );
+    }
+
+    #[test]
     fn out_of_range_values_are_clamped() {
         let mut settings =
             Settings::from_toml("[logging]\nlevel = \"loud\"\n[tracker]\nmax_moment_s = 0\n[markers.kill]\npre_s = 999\npost_s = -1\n").unwrap();

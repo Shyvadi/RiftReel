@@ -305,7 +305,8 @@ impl LcuClient {
         &self.creds
     }
 
-    async fn get_json<T: DeserializeOwned>(&self, path: &str) -> Result<T, LcuError> {
+    /// `GET <path>` as JSON. `serde_json::Value` keeps the whole payload.
+    pub async fn get_json<T: DeserializeOwned>(&self, path: &str) -> Result<T, LcuError> {
         let response = self
             .http
             .get(format!("https://{}{path}", self.host))
@@ -345,6 +346,21 @@ impl LcuClient {
     /// Opens the client's WebSocket and subscribes to gameflow phase changes. Only
     /// changes are pushed; read the current phase with [`Self::get_gameflow_phase`].
     pub async fn subscribe_gameflow_phase(&self) -> Result<PhaseSubscription, LcuError> {
+        self.subscribe(GAMEFLOW_PHASE_EVENT, parse_phase_event)
+            .await
+    }
+
+    /// Subscribes to a WAMP topic and yields every text frame the socket delivers,
+    /// verbatim, including the welcome frame (the fixture recorder keeps them).
+    pub async fn subscribe_frames(&self, topic: &str) -> Result<FrameSubscription, LcuError> {
+        self.subscribe(topic, |frame| Some(frame.to_owned())).await
+    }
+
+    async fn subscribe<T: Send + 'static>(
+        &self,
+        topic: &str,
+        map: fn(&str) -> Option<T>,
+    ) -> Result<Subscription<T>, LcuError> {
         let ws_err = |e: tokio_tungstenite::tungstenite::Error| LcuError::WebSocket(e.to_string());
         let mut request = format!("wss://{}/", self.host)
             .into_client_request()
@@ -361,10 +377,9 @@ impl LcuClient {
         )
         .await
         .map_err(ws_err)?;
+        let topic = serde_json::Value::from(topic);
         socket
-            .send(Message::text(format!(
-                "[{WAMP_SUBSCRIBE},\"{GAMEFLOW_PHASE_EVENT}\"]"
-            )))
+            .send(Message::text(format!("[{WAMP_SUBSCRIBE},{topic}]")))
             .await
             .map_err(ws_err)?;
 
@@ -373,8 +388,8 @@ impl LcuClient {
             while let Some(message) = socket.next().await {
                 match message {
                     Ok(Message::Text(text)) => {
-                        if let Some(phase) = parse_phase_event(text.as_str()) {
-                            if tx.send(phase).await.is_err() {
+                        if let Some(item) = map(text.as_str()) {
+                            if tx.send(item).await.is_err() {
                                 break;
                             }
                         }
@@ -386,7 +401,7 @@ impl LcuClient {
             }
             tracing::debug!("LCU WebSocket closed");
         });
-        Ok(PhaseSubscription { rx, task })
+        Ok(Subscription { rx, task })
     }
 }
 
@@ -404,20 +419,26 @@ impl LeagueClient for LcuClient {
     }
 }
 
-/// Gameflow phase changes pushed over the client's WebSocket.
-pub struct PhaseSubscription {
-    rx: mpsc::Receiver<GameflowPhase>,
+/// Messages pushed over the client's WebSocket for one subscription.
+pub struct Subscription<T> {
+    rx: mpsc::Receiver<T>,
     task: JoinHandle<()>,
 }
 
-impl PhaseSubscription {
-    /// The next phase change, or `None` once the socket closed (client exited/restarted).
-    pub async fn next(&mut self) -> Option<GameflowPhase> {
+/// Gameflow phase changes.
+pub type PhaseSubscription = Subscription<GameflowPhase>;
+
+/// Raw WAMP frames.
+pub type FrameSubscription = Subscription<String>;
+
+impl<T> Subscription<T> {
+    /// The next message, or `None` once the socket closed (client exited/restarted).
+    pub async fn next(&mut self) -> Option<T> {
         self.rx.recv().await
     }
 }
 
-impl Drop for PhaseSubscription {
+impl<T> Drop for Subscription<T> {
     fn drop(&mut self) {
         self.task.abort();
     }

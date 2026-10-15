@@ -132,9 +132,11 @@ Overwolf, so Downplayed goes to the source.
   and record `eventdata` from Practice Tool and custom games. The documented sample
   lists `GameStart, MinionsSpawning, FirstBrick, TurretKilled, InhibKilled, DragonKill,
   HeraldKill, BaronKill, ChampionKill, Multikill, Ace`. `FirstBlood`, `GameEnd`,
-  `InhibRespawningSoon` and `InhibRespawned` are also emitted. Newer objectives (e.g.
-  Voidgrubs) need verification against a live dump. Atakhan has been removed from the
-  game, so don't map it.
+  `InhibRespawningSoon` and `InhibRespawned` are also emitted. Voidgrubs arrive as
+  `HordeKill` (one per grub, `KillerName`/`Assisters`/`Stolen` like `HeraldKill`;
+  confirmed in a live game on 2026-10-15). Other newer objectives need verification
+  against a live dump (`downplayed-dev record`). Atakhan has been removed from the game,
+  so don't map it.
 
 ### 4.3 Event normalization (Outplayed parity)
 
@@ -147,10 +149,10 @@ observed windows:
 | `assist` | `ChampionKill` with me ∈ Assisters | 12 s | 8 s |
 | `death` | `ChampionKill` with VictimName = me | 12 s | 3 s |
 | `turret_kill` / `inhibitor_kill` | `TurretKilled` / `InhibKilled` with KillerName = me | 10 s | 5 s |
-| `dragon_kill` / `rift_herald` / `baron_kill` (+ Voidgrubs once verified) | `DragonKill` / `HeraldKill` / `BaronKill` (KillerName = me, or team, configurable) | 10 s | 5 s |
+| `dragon_kill` / `rift_herald` / `baron_kill` | `DragonKill` / `HeraldKill` / `BaronKill` (KillerName = me, or team, configurable) | 10 s | 5 s |
 | `victory` | `GameEnd` Result = Win | 10 s | 1 s |
 | `ultimate` (optional, off) | No official source (GEP `abilities`). Optional raw-input R-key heuristic while League is focused | 5 s | 5 s |
-| *Downplayed additions (default off):* `first_blood`, `ace`, `shutdown`, sprees | `FirstBlood`, `Ace`; sprees/shutdowns derived from the kill sequence (`tracker::streaks`) | 10 s | 5 s |
+| *Downplayed additions (default off):* `voidgrubs`, `first_blood`, `ace`, `shutdown`, sprees | `HordeKill` (as objectives above; labelled just below `rift_herald`), `FirstBlood`, `Ace`; sprees/shutdowns derived from the kill sequence (`tracker::streaks`) | 10 s | 5 s |
 
 Outplayed's League highlight set is exactly kill, assist, death, victory, ultimate,
 baron, dragon, herald, turret and inhibitor (`background.js:27788`). The last row

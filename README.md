@@ -45,6 +45,9 @@ cargo run --bin downplayed-dev -- replay fixtures/lol/ranked_win.json
 
 `downplayed-dev lcu` follows the running League client's gameflow phase.
 `downplayed-dev live` prints markers from a game in progress (try Practice Tool).
+`downplayed-dev record <out-dir>` records the next game as a pseudonymised fixture (see
+[fixtures/lol/README.md](fixtures/lol/README.md)), and `downplayed-dev eog` prints what
+Downplayed reads from the end-of-game stats.
 
 > **This machine:** Visual Studio 2022 Community has a partial MSVC 14.42 toolset (no
 > headers). `cc-rs` picks it first, so building `ring` fails with "Cannot open include

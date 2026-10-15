@@ -190,7 +190,7 @@ async fn ranked_win_through_a_crash_and_reconnect() {
     assert_eq!(status.state, TrackerState::InGame);
 
     h.server.set_game_time(1000.0);
-    h.wait_for_event(11).await;
+    h.wait_for_event(12).await;
 
     // Crash: the game dies, the client shows Reconnect, the game comes back later.
     h.server.set_up(false);
@@ -203,7 +203,7 @@ async fn ranked_win_through_a_crash_and_reconnect() {
     h.server.set_game_time(1300.0);
     h.server.set_up(true);
     h.phase(GameflowPhase::InProgress).await;
-    h.wait_for_event(15).await;
+    h.wait_for_event(16).await;
     assert!(!h.status.borrow().reconnecting);
 
     // Nexus down: GameEnd arrives, the client moves to its end-of-game screens.
@@ -268,7 +268,7 @@ async fn league_client_appearing_mid_match_adds_its_details() {
     h.send(RuntimeEvent::GameProcess(true)).await;
     h.server.set_game_time(600.0);
     h.server.set_up(true);
-    h.wait_for_event(5).await;
+    h.wait_for_event(6).await;
 
     let lcu = FakeLcu::ranked_win();
     lcu.eog_ready.store(true, Ordering::SeqCst);
@@ -301,7 +301,7 @@ async fn degraded_mode_without_the_league_client_records_the_win() {
 
     h.server.set_game_time(600.0);
     h.server.set_up(true); // the Live Client API comes up: match starts
-    h.wait_for_event(5).await;
+    h.wait_for_event(6).await;
     h.server.set_game_time(1810.0);
 
     let summary = h.summary().await;

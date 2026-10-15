@@ -1,41 +1,43 @@
-Ranked Solo/Duo win on Summoner's Rift (synthetic): first blood, double kill, stolen baron, shutdown, team ace, turret execution, victory
-mode CLASSIC · champion Shyvana · team ORDER · 29 events
+Ranked Solo/Duo win on Summoner's Rift (synthetic): first blood, a Voidgrub, double kill, stolen baron, shutdown, team ace, turret execution, victory
+mode CLASSIC · champion Shyvana · team ORDER · 30 events
 
 Markers
    id      time  type            label                 pre/post  riot ids
     1   03:05.2  kill            kill                      12/8  2
     2   03:05.2  first_blood     first_blood               10/5  3
-    3   06:52.7  death           death                     12/3  4
-    4   09:00.3  dragon_kill     dragon_kill               10/5  5
-    5   10:10.1  assist          assist                    12/8  6
-    6   14:00.5  rift_herald     rift_herald (team)        10/5  9
-    7   15:05.1  turret_kill     turret_kill               10/5  11
-    8   20:03.4  kill            kill                      12/8  12
-    9   20:06.9  kill            double_kill               12/8  13,14
-   10   20:10.0  assist          assist                    12/8  15
-   11   25:05.8  baron_kill      baron_kill (stolen)       10/5  16
-   12   25:12.2  kill            kill                      12/8  17
-   13   25:12.2  shutdown        shutdown                  10/5  17
-   14   25:12.2  spree           killing_spree             10/5  17
-   15   26:20.4  inhibitor_kill  inhibitor_kill            10/5  18
-   16   27:21.0  ace             ace (team)                10/5  25
-   17   28:20.1  death           death                     12/3  26
-   18   29:41.0  turret_kill     turret_kill (team)        10/5  27
-   19   30:02.6  victory         victory                   10/1  28
+    3   06:16.9  voidgrubs       voidgrubs                 10/5  4
+    4   06:52.7  death           death                     12/3  5
+    5   09:00.3  dragon_kill     dragon_kill               10/5  6
+    6   10:10.1  assist          assist                    12/8  7
+    7   14:00.5  rift_herald     rift_herald (team)        10/5  10
+    8   15:05.1  turret_kill     turret_kill               10/5  12
+    9   20:03.4  kill            kill                      12/8  13
+   10   20:06.9  kill            double_kill               12/8  14,15
+   11   20:10.0  assist          assist                    12/8  16
+   12   25:05.8  baron_kill      baron_kill (stolen)       10/5  17
+   13   25:12.2  kill            kill                      12/8  18
+   14   25:12.2  shutdown        shutdown                  10/5  18
+   15   25:12.2  spree           killing_spree             10/5  18
+   16   26:20.4  inhibitor_kill  inhibitor_kill            10/5  19
+   17   27:21.0  ace             ace (team)                10/5  26
+   18   28:20.1  death           death                     12/3  27
+   19   29:41.0  turret_kill     turret_kill (team)        10/5  28
+   20   30:02.6  victory         victory                   10/1  29
 
 Moments
     1  02:53.2–03:13.2   20.0 s  first_blood     markers 1,2
-    2  06:40.7–06:55.7   15.0 s  death           markers 3
-    3  08:50.3–09:05.3   15.0 s  dragon_kill     markers 4
-    4  09:58.1–10:18.1   20.0 s  assist          markers 5
-    5  13:50.5–14:05.5   15.0 s  rift_herald     markers 6
-    6  14:55.1–15:10.1   15.0 s  turret_kill     markers 7
-    7  19:51.4–20:18.0   26.6 s  double_kill     markers 8,9,10
-    8  24:55.8–25:20.2   24.4 s  shutdown        markers 11,12,13,14
-    9  26:10.4–26:25.4   15.0 s  inhibitor_kill  markers 15
-   10  27:11.0–27:26.0   15.0 s  ace             markers 16
-   11  28:08.1–28:23.1   15.0 s  death           markers 17
-   12  29:31.0–29:46.0   15.0 s  turret_kill     markers 18
-   13  29:52.6–30:03.6   11.0 s  victory         markers 19
+    2  06:06.9–06:21.9   15.0 s  voidgrubs       markers 3
+    3  06:40.7–06:55.7   15.0 s  death           markers 4
+    4  08:50.3–09:05.3   15.0 s  dragon_kill     markers 5
+    5  09:58.1–10:18.1   20.0 s  assist          markers 6
+    6  13:50.5–14:05.5   15.0 s  rift_herald     markers 7
+    7  14:55.1–15:10.1   15.0 s  turret_kill     markers 8
+    8  19:51.4–20:18.0   26.6 s  double_kill     markers 9,10,11
+    9  24:55.8–25:20.2   24.4 s  shutdown        markers 12,13,14,15
+   10  26:10.4–26:25.4   15.0 s  inhibitor_kill  markers 16
+   11  27:11.0–27:26.0   15.0 s  ace             markers 17
+   12  28:08.1–28:23.1   15.0 s  death           markers 18
+   13  29:31.0–29:46.0   15.0 s  turret_kill     markers 19
+   14  29:52.6–30:03.6   11.0 s  victory         markers 20
 
 Result Win · K/D/A 4/2/2

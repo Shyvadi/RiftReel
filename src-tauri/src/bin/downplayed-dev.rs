@@ -3,6 +3,13 @@
 //! ```text
 //! downplayed-dev replay <fixture.json> [--extras] [--team] [--json]
 //!     Run a Live Client fixture through the tracker and print markers and moments.
+//!     League client files recorded with it (`lcu/<name>.session.json`, `.eog.json`)
+//!     are used too, so the result comes from the end-of-game stats when they exist.
+//! downplayed-dev record <out-dir>
+//!     Wait for the next game and record it as a fixture in <out-dir>: `<name>.json`
+//!     plus `lcu/<name>.{session,eog,frames}.json` from the League client. Player
+//!     names are pseudonymised (`Downplayer#DP1` is you). Files are rewritten every few
+//!     seconds; it stops by itself after the end-of-game screen.
 //! downplayed-dev lcu
 //!     Find the running League client, print its gameflow phase and queue, then
 //!     follow phase changes over its WebSocket (Ctrl+C to stop).
@@ -14,21 +21,26 @@
 //!     Downplayed takes from them (result, K/D/A, length). Compare with the EOG screen.
 //! ```
 //!
-//! `--extras` enables first blood/ace/shutdown/spree markers; `--team` also marks your
-//! team's objectives. Set `DOWNPLAYED_LOG=debug` for (scrubbed) diagnostics on stderr.
+//! `--extras` enables the Voidgrubs/first blood/ace/shutdown/spree markers; `--team` also
+//! marks your team's objectives. Set `DOWNPLAYED_LOG=debug` for (scrubbed) diagnostics
+//! on stderr.
 
+use std::path::Path;
 use std::process::ExitCode;
+use std::time::Instant;
 
 use downplayed_lib::league::client::{self, LcuClient};
 use downplayed_lib::league::live::{LiveClient, EVENT_POLL_INTERVAL};
 use downplayed_lib::logging;
-use downplayed_lib::replay::{self, clock, render_text, Fixture};
+use downplayed_lib::recorder::{self, RecorderTimings};
+use downplayed_lib::replay::{self, clock, render_text, Fixture, LcuRecording};
 use downplayed_lib::tracker::machine::EndReason;
 use downplayed_lib::tracker::normalize::{MarkerChange, MarkerConfig};
 use downplayed_lib::tracker::session::{MatchSession, SessionConfig};
 
 const USAGE: &str = "usage:
   downplayed-dev replay <fixture.json> [--extras] [--team] [--json]
+  downplayed-dev record <out-dir>
   downplayed-dev lcu
   downplayed-dev live [--extras] [--team]
   downplayed-dev eog";
@@ -82,6 +94,7 @@ async fn main() -> ExitCode {
         Err(e) => Err(e),
         Ok(flags) => match command.as_str() {
             "replay" => run_replay(&flags),
+            "record" => run_record(&flags).await,
             "lcu" => run_lcu().await,
             "live" => run_live(&flags).await,
             "eog" => run_eog().await,
@@ -107,7 +120,9 @@ fn run_replay(flags: &Flags) -> Result<(), String> {
         .first()
         .ok_or("replay needs a fixture path")?;
     let fixture = Fixture::load(path).map_err(|e| e.to_string())?;
-    let report = replay::replay(&fixture, &flags.session_config()).map_err(|e| e.to_string())?;
+    let lcu = LcuRecording::load_beside(path).map_err(|e| e.to_string())?;
+    let report =
+        replay::replay_with(&fixture, &lcu, &flags.session_config()).map_err(|e| e.to_string())?;
     if flags.json {
         println!(
             "{}",
@@ -116,6 +131,50 @@ fn run_replay(flags: &Flags) -> Result<(), String> {
     } else {
         print!("{}", render_text(&report));
     }
+    Ok(())
+}
+
+async fn run_record(flags: &Flags) -> Result<(), String> {
+    let out_dir = Path::new(
+        flags
+            .positional
+            .first()
+            .ok_or("record needs an output directory")?,
+    );
+    let live = LiveClient::new().map_err(|e| e.to_string())?;
+    let lcu = match client::discover() {
+        Ok(creds) => Some(LcuClient::new(creds).map_err(|e| e.to_string())?),
+        Err(e) => {
+            println!("no League client ({e}): recording the Live Client API only");
+            None
+        }
+    };
+    let start = Instant::now();
+    let recorded = recorder::record(
+        &live,
+        lcu.as_ref(),
+        out_dir,
+        &RecorderTimings::default(),
+        |line| println!("[{:>6.1}s] {line}", start.elapsed().as_secs_f64()),
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+    println!(
+        "\nsaved {} events{}:",
+        recorded.events,
+        if recorded.has_eog {
+            " and the end-of-game stats"
+        } else {
+            ""
+        }
+    );
+    for file in &recorded.files {
+        println!("  {}", file.display());
+    }
+    println!(
+        "replay: cargo run --bin downplayed-dev -- replay {}",
+        recorded.fixture.display()
+    );
     Ok(())
 }
 

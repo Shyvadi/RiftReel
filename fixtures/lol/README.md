@@ -1,9 +1,37 @@
 # League fixtures
 
-Synthetic data in the shapes Riot's local APIs return. All player names are invented
-(`Downplayer#DP1` is always the local player). Real recordings should replace or extend
-these once the fixture recorder exists (doc 02 §B5.1). Pseudonymise names before
-committing any real recording.
+Data in the shapes Riot's local APIs return. All player names are invented or
+pseudonymised (`Downplayer#DP1` is always the local player). The synthetic fixtures are
+hand-written; `downplayed-dev record` (doc 02 §B5.1) records real games in the same
+format.
+
+## Recording a match
+
+```
+cargo run --bin downplayed-dev -- record <out-dir>
+```
+
+Start it before or during a game (Practice Tool works). It waits for the Live Client API,
+records until the game closes, then waits up to 3 minutes for the League client's
+end-of-game stats and exits after the end-of-game screen. It writes:
+
+| File | What |
+|---|---|
+| `<name>.json` | Live Client timeline in the format below (`<name>` is `<mode>-<UTC date>-<time>`) |
+| `lcu/<name>.session.json` | `GET /lol-gameflow/v1/session` during the game |
+| `lcu/<name>.eog.json` | `GET /lol-end-of-game/v1/eog-stats-block` after it |
+| `lcu/<name>.frames.json` | gameflow-phase WebSocket frames, in arrival order |
+
+The files are rewritten every few seconds, so stopping the recorder early keeps what it
+had. Raw payloads stay in memory; what's written is pseudonymised consistently across all
+files: you become `Downplayer#DP1`, everyone else `Player1#DP1`, `Player2#DP1`, … in
+`playerlist` order, and names in events that match nobody become `Unknown<n>`. puuids,
+summoner IDs and account IDs are dropped, game IDs become `1` (a real one would look up
+everyone's name), and a file that would still contain a real Riot ID, puuid or the
+League client password isn't written. Review a recording before committing it anyway.
+
+`downplayed-dev replay` uses the `lcu/` files of a fixture when they exist, so the result
+comes from the end-of-game stats (`--json` shows `resultSource`).
 
 ## Live Client Data API timelines (`*.json`)
 
@@ -22,7 +50,7 @@ in the integration tests and `downplayed-dev replay` both work this way.
 
 | Fixture | Covers |
 |---|---|
-| `ranked_win.json` | First blood, death, dragon, assist, turret, double kill, stolen baron, shutdown/spree, team ace, execution by a turret, `GameEnd` **Win** |
+| `ranked_win.json` | First blood, a Voidgrub (`HordeKill`), death, dragon, assist, turret, double kill, stolen baron, shutdown/spree, team ace, execution by a turret, `GameEnd` **Win** |
 | `aram_loss.json` | ARAM mode filter, triple kill, executions by champions, `GameEnd` **Lose** (no victory marker) |
 | `penta_cap.json` | Multikill relabelling up to a pentakill, and a long assist chain split by the 60 s moment cap |
 | `spectator.json` | No active player: never tracked |
@@ -36,6 +64,9 @@ cargo run --bin downplayed-dev -- replay fixtures/lol/ranked_win.json
 `*.expected.txt` holds that command's output (`--extras --team` for the `_extras`
 variant), checked by `tests/fixture_replay.rs`. To regenerate it after an intended change,
 set `UPDATE_EXPECTED=1` when running that test.
+
+`--extras` turns on the markers that are off by default: Voidgrubs, first blood, ace,
+shutdown and sprees.
 
 ## League client (`lcu/`)
 

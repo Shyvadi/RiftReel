@@ -224,7 +224,7 @@ Note that `KillerName` in events is the game name without the tag (A3).
 | `ultimate` | **none** | Optional, off: raw-input R-key detector while League is foreground | Opt-in only |
 | `victory` | `GameEnd` (`Result` Win/Lose) and LCU EOG stats | `victory` marker 10 s/1 s; set `result.win` from EOG | **Fixes the win-recording bug** (0/117 wins recorded) |
 | `baron_kill`, `dragon_kill`, `rift_herald`, `turret_kill`, `inhibitor_kill` | `BaronKill`, `DragonKill` (`DragonType`, `Stolen`), `HeraldKill`, `TurretKilled`, `InhibKilled` | Same as Outplayed (KillerName = me), plus optional "my team took it" and "stolen" labels | Uses `Stolen`/`DragonType`; tracks the last EventID correctly |
-| *(not in Outplayed)* first blood, ace, shutdown, sprees, Voidgrubs/Elder dragon | `FirstBlood` (`Recipient`), `Ace` (`Acer`, `AcingTeam`); sprees/shutdowns derived in `tracker::streaks`; newer objectives (verify names) | Default **off**, opt-in | New |
+| *(not in Outplayed)* first blood, ace, shutdown, sprees, Voidgrubs/Elder dragon | `FirstBlood` (`Recipient`), `Ace` (`Acer`, `AcingTeam`); sprees/shutdowns derived in `tracker::streaks`; Voidgrubs = `HordeKill` (one per grub, shaped like `HeraldKill`) | Default **off**, opt-in | New |
 | match start/end | LCU gameflow `InProgress` → `WaitingForStats`/`EndOfGame`; Live `GameStart`/`GameEnd` | State machine B3 | Ends on game end, not process exit; handles `Reconnect` |
 | champion, queue, mode, K/D/A | `playerlist` (`championName`, `scores`), `gamestats.gameMode`, LCU session `gameData.queue.id`, EOG stats | Final numbers from EOG | Champion never null; real queue names; modes filterable |
 | rank / LP | LCU `/lol-ranked/v1/current-ranked-stats`; EOG LP delta | Optional | Not present in Outplayed |

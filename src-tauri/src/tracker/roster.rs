@@ -105,6 +105,13 @@ impl fmt::Debug for PlayerIdentity {
     }
 }
 
+/// Whether an event name (`KillerName`, `VictimName`, …) is a turret, minion, monster or
+/// other structure rather than a player, going by Riot's object naming.
+pub fn is_game_object(name: &str) -> bool {
+    const PREFIXES: [&str; 5] = ["Turret_", "Minion_", "SRU_", "Barracks_", "HA_"];
+    PREFIXES.iter().any(|prefix| name.starts_with(prefix))
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 #[serde(rename_all = "UPPERCASE")]
 pub enum Team {
@@ -192,10 +199,7 @@ impl Roster {
         if !self.entries.is_empty() {
             return self.find(name).is_some();
         }
-        const NON_CHAMPION_PREFIXES: [&str; 5] = ["Turret_", "Minion_", "SRU_", "Barracks_", "HA_"];
-        !NON_CHAMPION_PREFIXES
-            .iter()
-            .any(|prefix| name.starts_with(prefix))
+        !is_game_object(name)
     }
 
     /// Every player name in the match (for [`crate::privacy::register_names`]).

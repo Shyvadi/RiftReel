@@ -7,6 +7,7 @@
 pub mod league;
 pub mod logging;
 pub mod privacy;
+pub mod recorder;
 pub mod replay;
 pub mod settings;
 pub mod tracker;

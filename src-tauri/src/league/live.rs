@@ -53,6 +53,13 @@ impl LiveError {
     }
 }
 
+/// A response as the API sent it: status and JSON body (`Null` if the body isn't JSON).
+#[derive(Debug, Clone)]
+pub struct RawResponse {
+    pub status: u16,
+    pub body: serde_json::Value,
+}
+
 /// HTTP client for the Live Client Data API.
 #[derive(Clone)]
 pub struct LiveClient {
@@ -102,6 +109,19 @@ impl LiveClient {
         serde_json::from_slice(&body).map_err(|e| LiveError::Decode {
             endpoint,
             detail: e.to_string(),
+        })
+    }
+
+    /// `GET /liveclientdata/<endpoint>` without interpreting it; error statuses are
+    /// returned too (the fixture recorder keeps payloads verbatim).
+    pub async fn get_raw(&self, endpoint: &str) -> Result<RawResponse, LiveError> {
+        let url = format!("{}/liveclientdata/{endpoint}", self.base);
+        let response = self.http.get(url).send().await.map_err(classify)?;
+        let status = response.status().as_u16();
+        let body = response.bytes().await.map_err(classify)?;
+        Ok(RawResponse {
+            status,
+            body: serde_json::from_slice(&body).unwrap_or_default(),
         })
     }
 
