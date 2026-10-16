@@ -1,8 +1,14 @@
 """Draws RiftReel's icon set into src-tauri/icons (original artwork).
 
-The mark: a white dragon coiled into a reel around a play button, spines on its back,
-biting at its own arrow-tipped tail, on a rounded tile that runs from teal to blue. The
-same mark is used at every size, the tray icon (tray.png) included.
+The mark: a white dragon coiled into a reel around a play button, biting the tip of its
+own tail, on a rounded tile that runs from teal to blue. The same mark is used at every
+size, the tray icon (tray.png) included.
+
+It is constructed, not drawn by hand. The body lies between two circles about one
+centre. The tail tapers to its tip between two more circles, each tangent to one of
+those, so the taper flows out of the body. The head is the body bulged out to a slightly
+larger circle, cut square at the nose and chin around a narrow mouth. The horns are
+crescents of two arcs and the eye is a lens of two arcs; every other edge is straight.
 
 The mark is built here as SVG paths (one per shape, each filled even-odd), which this
 script also writes to src-tauri/icons/source.svg and to ui/src/lib/mark.js for the
@@ -27,28 +33,22 @@ SUPER = 4
 TEAL = (20, 184, 166)
 BLUE = (37, 99, 235)
 
-# The coil, on the 1024 grid: its centre, its body's middle radius and half thickness,
-# and angles in degrees clockwise from 3 o'clock: where the tail ends (thin), where its
-# taper ends, and where the neck meets the head.
-CENTRE = (512, 548)
-MIDDLE, HALF, TAIL_HALF = 252, 50, 18
-TAIL_END, TAPER_TO, NECK = -44, 26, 236
-# Spines on its back: (angle, height), growing toward the head.
-SPINES = [(96, 26), (124, 34), (152, 42), (180, 50), (207, 54)]
-# The head and its horns, facing right with (0, 0) in the middle of the neck. It sits
-# on the coil at NECK, turned HEAD_TURN degrees up from the coil's direction there.
-HEAD_TURN = 38
-HEAD = (
-    "M-30 -50 C10 -58 50 -72 92 -78 C132 -78 176 -62 214 -44 L228 -46 L246 -22 "
-    "L206 -14 L197 10 L186 -9 L150 2 L222 28 C176 50 96 58 40 54 L-30 50 Z"
-)
-HORNS = [
-    "M98 -76 C82 -132 26 -170 -62 -178 C-6 -150 28 -110 40 -66 Z",
-    "M26 -62 C8 -96 -36 -122 -98 -124 C-52 -102 -26 -80 -18 -54 Z",
-]
-EYE, EYE_RADIUS = (112, -40), 16
+# On the 1024 grid; angles in degrees, clockwise from 3 o'clock. The body runs clockwise
+# from the tail's tip (TIP) round to the head, and is whole from TIP + 180 on.
+CENTRE = (530, 548)
+OUTER, INNER = 300, 180
+MIDDLE = (OUTER + INNER) / 2
+TIP, NECK = 293, 244
+# The head: how far it bulges past the body, where the nose and chin are cut, the corner
+# of the mouth, and how far each lip stands from the middle of the body.
+BULGE, NOSE, CHIN, MOUTH, LIP = 22, 303, 299, 286, 14
+# Horns: base from and to (angles), the tip's angle and height above the head, and the
+# radii of the front and back arcs.
+HORNS = [(262, 278, 238, 126, 210, 170), (249, 260, 226, 84, 170, 140)]
+# The eye: its angle and radius, length, height and tilt.
+EYE = (284, 262, 48, 15, 3)
 # The play button in the middle: its height, and how far along each edge a corner rounds.
-PLAY_HEIGHT, PLAY_ROUND = 190, 34
+PLAY_HEIGHT, PLAY_ROUND = 196, 34
 
 
 def num(value):
@@ -79,65 +79,80 @@ def arc(centre, radius, start, end):
     return " ".join(curves)
 
 
-def polygon(points):
-    return "M" + " L".join(xy(p) for p in points) + " Z"
+def arc_between(p0, p1, radius, away_from):
+    """The shorter arc of the given radius from p0 to p1, bulging away from `away_from`."""
+    half = math.dist(p0, p1) / 2
+    middle = ((p0[0] + p1[0]) / 2, (p0[1] + p1[1]) / 2)
+    normal = (-(p1[1] - p0[1]) / (2 * half), (p1[0] - p0[0]) / (2 * half))
+    reach = math.sqrt(max(radius * radius - half * half, 0))
+    best = None
+    for side in (1, -1):
+        centre = (middle[0] + side * reach * normal[0], middle[1] + side * reach * normal[1])
+        start = math.degrees(math.atan2(p0[1] - centre[1], p0[0] - centre[0]))
+        end = math.degrees(math.atan2(p1[1] - centre[1], p1[0] - centre[0]))
+        sweep = (end - start + 180) % 360 - 180
+        bulge = math.dist(polar(centre, radius, start + sweep / 2), away_from)
+        if best is None or bulge > best[0]:
+            best = (bulge, centre, start, start + sweep)
+    _, centre, start, end = best
+    return arc(centre, radius, start, end)
 
 
 def body():
-    """The coil from the tail's thin end round to the neck."""
-
-    def half(degrees):
-        t = min(1, max(0, (degrees - TAIL_END) / (TAPER_TO - TAIL_END)))
-        return TAIL_HALF + (HALF - TAIL_HALF) * t * t * (3 - 2 * t)
-
-    taper = [TAIL_END + (TAPER_TO - TAIL_END) * i / 12 for i in range(13)]
-    outer = [polar(CENTRE, MIDDLE + half(a), a) for a in taper]
-    inner = [polar(CENTRE, MIDDLE - half(a), a) for a in reversed(taper)]
-    return " ".join(
-        [f"M{xy(outer[0])}"]
-        + [f"L{xy(p)}" for p in outer[1:]]
-        + [arc(CENTRE, MIDDLE + HALF, TAPER_TO, NECK)]
-        + [f"L{xy(polar(CENTRE, MIDDLE - HALF, NECK))}", arc(CENTRE, MIDDLE - HALF, NECK, TAPER_TO)]
-        + [f"L{xy(p)}" for p in inner[1:]]
-        + ["Z"]
+    """The whole part of the body, from where the tail's taper ends round to the neck."""
+    start, end = TIP + 180 - 3, NECK + 360
+    return (
+        f"M{xy(polar(CENTRE, OUTER, start))} {arc(CENTRE, OUTER, start, end)} "
+        f"L{xy(polar(CENTRE, INNER, end))} {arc(CENTRE, INNER, end, start)} Z"
     )
 
 
-def spine(degrees, height, width=14, lean=8):
-    """A spine on the coil's back, leaning toward the tail."""
-    root = MIDDLE + HALF - 14
-    return polygon([
-        polar(CENTRE, root, degrees - width / 2),
-        polar(CENTRE, MIDDLE + HALF + height, degrees - lean),
-        polar(CENTRE, root, degrees + width / 2),
-    ])
+def tail():
+    """The tail, tapering to its tip between two circles: one through the tip and tangent
+    to the outer circle, one through the tip and tangent to the inner circle, both
+    where the taper ends."""
+    whole = TIP + 180
+    toward = polar((0, 0), 1, whole)
+    shift_out, shift_in = (OUTER - MIDDLE) / 2, (MIDDLE - INNER) / 2
+    outer = (CENTRE[0] + shift_out * toward[0], CENTRE[1] + shift_out * toward[1])
+    inner = (CENTRE[0] - shift_in * toward[0], CENTRE[1] - shift_in * toward[1])
+    outer_r, inner_r = (OUTER + MIDDLE) / 2, (MIDDLE + INNER) / 2
+    return (
+        f"M{xy(polar(outer, outer_r, TIP))} {arc(outer, outer_r, TIP, whole)} "
+        f"L{xy(polar(inner, inner_r, whole))} {arc(inner, inner_r, whole, TIP)} Z"
+    )
 
 
-def tail_tip(length=24, barb=44, back=6):
-    """The tail's arrowhead, pointing on round the coil into the mouth."""
-    return polygon([
-        polar(CENTRE, MIDDLE + barb, TAIL_END + back),
-        polar(CENTRE, MIDDLE, TAIL_END - length),
-        polar(CENTRE, MIDDLE - barb, TAIL_END + back),
-        polar(CENTRE, MIDDLE, TAIL_END - 2),
-    ])
+def head():
+    """The head, with its eye cut out."""
+    rim = OUTER + BULGE
+    outline = (
+        f"M{xy(polar(CENTRE, rim, NECK - 3))} {arc(CENTRE, rim, NECK - 3, NOSE)} "
+        f"L{xy(polar(CENTRE, MIDDLE + LIP, NOSE))} L{xy(polar(CENTRE, MIDDLE, MOUTH))} "
+        f"L{xy(polar(CENTRE, MIDDLE - LIP, CHIN))} L{xy(polar(CENTRE, INNER, CHIN))} "
+        f"{arc(CENTRE, INNER, CHIN, NECK - 3)} Z"
+    )
+    at, radius, length, height, tilt = EYE
+    middle = polar(CENTRE, radius, at)
+    ends = [polar(middle, length / 2, at + 90 + tilt + side) for side in (180, 0)]
+    up, down = polar(middle, 1000, at + tilt), polar(middle, 1000, at + tilt + 180)
+    lens = (length * length / 4 + height * height / 4) / height
+    eye = (
+        f"M{xy(ends[0])} {arc_between(ends[0], ends[1], lens, down)} "
+        f"{arc_between(ends[1], ends[0], lens, up)} Z"
+    )
+    return outline + " " + eye
 
 
-def on_neck(path):
-    """Path data drawn facing right about (0, 0), placed and turned onto the neck."""
-    x0, y0 = polar(CENTRE, MIDDLE, NECK)
-    turn = math.radians(NECK + 90 + HEAD_TURN)
-    c, s = math.cos(turn), math.sin(turn)
-
-    def place(match):
-        x, y = float(match.group(1)), float(match.group(2))
-        return xy((x0 + x * c - y * s, y0 + x * s + y * c))
-
-    return re.sub(r"(-?\d+(?:\.\d+)?) (-?\d+(?:\.\d+)?)", place, path)
-
-
-def circle(centre, radius):
-    return f"M{xy(polar(centre, radius, 0))} {arc(centre, radius, 0, 360)} Z"
+def horn(start, end, tip_at, height, front, back):
+    """A crescent from the head's rim, swept back: two arcs bulging outward."""
+    rim = OUTER + BULGE - 8
+    base_back, base_front = polar(CENTRE, rim, start), polar(CENTRE, rim, end)
+    point = polar(CENTRE, OUTER + BULGE + height, tip_at)
+    return (
+        f"M{xy(base_front)} {arc_between(base_front, point, front, CENTRE)} "
+        f"{arc_between(point, base_back, back, CENTRE)} Z"
+    )
 
 
 def play():
@@ -166,14 +181,7 @@ def play():
 
 def mark():
     """The mark's paths, one per shape."""
-    eye = on_neck(f"M{EYE[0]} {EYE[1]} Z")[1:-2]
-    eye_centre = tuple(float(v) for v in eye.split())
-    return (
-        [body(), tail_tip()]
-        + [spine(at, height) for at, height in SPINES]
-        + [on_neck(horn) for horn in HORNS]
-        + [on_neck(HEAD) + " " + circle(eye_centre, EYE_RADIUS), play()]
-    )
+    return [body(), tail(), head()] + [horn(*h) for h in HORNS] + [play()]
 
 
 def subpaths(path, scale):
