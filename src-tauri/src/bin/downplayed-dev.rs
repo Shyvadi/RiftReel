@@ -28,6 +28,10 @@
 //!     else the primary one) for <seconds> (default 10), then print the file, frame
 //!     counts and dropped/duplicated frames. <out-dir> defaults to `capture-test` in
 //!     Downplayed's data folder. --stop-on-game ends it early if a League game starts.
+//!     The sound comes from `[capture.audio]` in the settings.
+//! downplayed-dev audio
+//!     List the audio output and input devices (what `[capture.audio]` device names
+//!     match against). Nothing is recorded.
 //! ```
 //!
 //! `--extras` enables the Voidgrubs/first blood/ace/shutdown/spree markers; `--team` also
@@ -40,7 +44,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use downplayed_lib::capture::controller::CaptureTimings;
 use downplayed_lib::capture::{
-    display, ffmpeg, probe, CaptureController, CaptureState, StartRequest,
+    display, ffmpeg, probe, wasapi, CaptureController, CaptureState, StartRequest,
 };
 use downplayed_lib::league::client::{self, LcuClient};
 use downplayed_lib::league::live::{LiveClient, EVENT_POLL_INTERVAL};
@@ -59,7 +63,8 @@ const USAGE: &str = "usage:
   downplayed-dev live [--extras] [--team]
   downplayed-dev eog
   downplayed-dev probe [--force]
-  downplayed-dev capture [seconds] [out-dir] [--stop-on-game]";
+  downplayed-dev capture [seconds] [out-dir] [--stop-on-game]
+  downplayed-dev audio";
 
 #[derive(Default)]
 struct Flags {
@@ -119,6 +124,7 @@ async fn main() -> ExitCode {
             "live" => run_live(&flags).await,
             "eog" => run_eog().await,
             "probe" => run_probe(&flags).await,
+            "audio" => run_audio(),
             "capture" => run_capture(&flags).await,
             "help" | "-h" | "--help" => {
                 println!("{USAGE}");
@@ -520,6 +526,59 @@ async fn run_capture(flags: &Flags) -> Result<(), String> {
     );
     if let Some(error) = &info.error {
         println!("ended early: {error}");
+    }
+    match &info.audio {
+        Some(audio) => {
+            println!(
+                "audio tracks {} · started {:.1} ms before the video ({})",
+                audio.tracks.join(", "),
+                audio.lead_s * 1000.0,
+                if audio.aligned {
+                    "moved into sync"
+                } else {
+                    "not moved: the remux failed"
+                }
+            );
+            for source in &audio.sources {
+                let stats = &source.stats;
+                println!(
+                    "  {:?} {}: {} frames, {:.1} s of silence filled, {} dropped / {} repeated{}",
+                    source.kind,
+                    source.device,
+                    stats.frames,
+                    stats.silence_frames as f64 / 48_000.0,
+                    stats.dropped_frames,
+                    stats.repeated_frames,
+                    source
+                        .error
+                        .as_deref()
+                        .map(|e| format!(" · {e}"))
+                        .unwrap_or_default()
+                );
+            }
+        }
+        None => println!("no audio"),
+    }
+    Ok(())
+}
+
+fn run_audio() -> Result<(), String> {
+    let devices = wasapi::devices();
+    if devices.is_empty() {
+        return Err("no audio devices found".into());
+    }
+    for (input, heading) in [
+        (false, "output devices (loopback)"),
+        (true, "input devices"),
+    ] {
+        println!("{heading}:");
+        for device in devices.iter().filter(|d| d.input == input) {
+            println!(
+                "  {}{}",
+                device.name,
+                if device.default { "  (default)" } else { "" }
+            );
+        }
     }
     Ok(())
 }

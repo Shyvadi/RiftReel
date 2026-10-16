@@ -714,6 +714,7 @@ mod tests {
                 dropped_frames: 0,
                 duplicated_frames: 4,
                 error: None,
+                audio: None,
                 folder: std::path::PathBuf::from(r"C:\library\2026-10-15_16-12-00"),
             },
         });

@@ -10,6 +10,7 @@ use serde::de::{Deserializer, MapAccess, Visitor};
 use serde::ser::{SerializeMap, Serializer};
 use serde::{Deserialize, Serialize};
 
+use crate::capture::audio::{SourceConfig, SourceKind};
 use crate::capture::probe::CANDIDATES;
 use crate::capture::CaptureConfig;
 use crate::tracker::moments::DEFAULT_MAX_MOMENT_S;
@@ -28,6 +29,9 @@ const HEADER: &str = "\
 # [capture]: encoder = \"auto\" probes NVENC, AMF, QSV, then the CPU once and keeps the
 #   answer; or name one (h264_nvenc, hevc_nvenc, av1_nvenc, h264_amf, h264_qsv, ...).
 #   ffmpeg_path = \"\" uses the bundled ffmpeg.
+# [capture.audio]: game_only = true records only League's sound instead of everything
+#   the output device plays; devices are matched by part of their name (\"\" = default);
+#   volumes run 0.0 to 4.0. `downplayed-dev audio` lists the devices.
 # [markers.<type>]: pre_s / post_s are seconds kept before / after the event.
 ";
 
@@ -68,6 +72,7 @@ pub struct CaptureSettings {
     pub encoder: String,
     /// An ffmpeg with `ddagrab` to use instead of the bundled one; empty: bundled.
     pub ffmpeg_path: String,
+    pub audio: AudioSettings,
 }
 
 impl Default for CaptureSettings {
@@ -79,7 +84,97 @@ impl Default for CaptureSettings {
             bitrate_mbps: 10.0,
             encoder: AUTO_ENCODER.into(),
             ffmpeg_path: String::new(),
+            audio: AudioSettings::default(),
         }
+    }
+}
+
+/// `[capture.audio]`: what is heard in the recording. Track 0 mixes the sources; each
+/// source also gets a track of its own.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AudioSettings {
+    /// Record sound at all.
+    pub enabled: bool,
+    /// Only League's sound (process loopback), instead of everything the output device
+    /// plays (Discord, music, …).
+    pub game_only: bool,
+    /// The output device to record: part of its name, empty for the default.
+    pub output_device: String,
+    pub output_volume: f64,
+    /// Record the microphone too (off by default).
+    pub microphone: bool,
+    /// Part of the microphone's name, empty for the default input.
+    pub microphone_device: String,
+    pub microphone_volume: f64,
+}
+
+impl Default for AudioSettings {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            game_only: false,
+            output_device: String::new(),
+            output_volume: 1.0,
+            microphone: false,
+            microphone_device: String::new(),
+            microphone_volume: 1.0,
+        }
+    }
+}
+
+const VOLUME_RANGE: (f64, f64) = (0.0, 4.0);
+
+impl AudioSettings {
+    fn validate(&mut self) -> Vec<String> {
+        let mut warnings = Vec::new();
+        let (low, high) = VOLUME_RANGE;
+        for (name, volume) in [
+            ("output_volume", &mut self.output_volume),
+            ("microphone_volume", &mut self.microphone_volume),
+        ] {
+            if !(volume.is_finite() && (low..=high).contains(volume)) {
+                let fixed = if volume.is_finite() {
+                    volume.clamp(low, high)
+                } else {
+                    1.0
+                };
+                warnings.push(format!(
+                    "capture.audio.{name} = {volume} is out of range; using {fixed}"
+                ));
+                *volume = fixed;
+            }
+        }
+        warnings
+    }
+
+    /// The sources to record, in track order.
+    pub fn sources(&self) -> Vec<SourceConfig> {
+        if !self.enabled {
+            return Vec::new();
+        }
+        let device = |name: &str| Some(name.trim().to_owned()).filter(|n| !n.is_empty());
+        let mut sources = vec![SourceConfig {
+            kind: if self.game_only {
+                SourceKind::Game
+            } else {
+                SourceKind::Desktop
+            },
+            device: if self.game_only {
+                None
+            } else {
+                device(&self.output_device)
+            },
+            volume: self.output_volume as f32,
+        }];
+        if self.microphone {
+            sources.push(SourceConfig {
+                kind: SourceKind::Microphone,
+                device: device(&self.microphone_device),
+                volume: self.microphone_volume as f32,
+            });
+        }
+        sources
     }
 }
 
@@ -135,6 +230,7 @@ impl CaptureSettings {
             ));
             self.encoder = AUTO_ENCODER.into();
         }
+        warnings.extend(self.audio.validate());
         warnings
     }
 }
@@ -407,6 +503,7 @@ impl Settings {
             fps: capture.fps,
             bitrate_kbps: (capture.bitrate_mbps * 1000.0).round() as u32,
             encoder: (capture.encoder != AUTO_ENCODER).then(|| capture.encoder.clone()),
+            audio: capture.audio.sources(),
             ffmpeg: (!path.is_empty()).then(|| PathBuf::from(path)),
             matches_dir: paths.matches_dir.clone(),
             probe_file: paths.capture_probe_file.clone(),
@@ -623,6 +720,53 @@ mod tests {
         assert_eq!(settings.capture.fps, 240);
         assert_eq!(settings.capture.bitrate_mbps, 1.0);
         assert_eq!(settings.capture.encoder, "auto");
+    }
+
+    #[test]
+    fn audio_sources_follow_the_settings() {
+        let defaults = Settings::default();
+        assert!(defaults.to_toml().contains("[capture.audio]"));
+        assert_eq!(
+            defaults.capture.audio.sources(),
+            [SourceConfig {
+                kind: SourceKind::Desktop,
+                device: None,
+                volume: 1.0
+            }],
+            "everything the output device plays, no microphone"
+        );
+
+        let mut settings = Settings::from_toml(
+            "[capture.audio]\ngame_only = true\noutput_device = \"Speakers\"\nmicrophone = true\nmicrophone_device = \" USB \"\nmicrophone_volume = 0.5\n",
+        )
+        .unwrap();
+        assert!(settings.validate().is_empty());
+        assert_eq!(
+            settings.capture.audio.sources(),
+            [
+                SourceConfig {
+                    kind: SourceKind::Game,
+                    device: None,
+                    volume: 1.0
+                },
+                SourceConfig {
+                    kind: SourceKind::Microphone,
+                    device: Some("USB".into()),
+                    volume: 0.5
+                },
+            ]
+        );
+        let paths = AppPaths::under(PathBuf::from(r"C:\dp"));
+        assert_eq!(settings.capture_config(&paths).audio.len(), 2);
+
+        let mut off =
+            Settings::from_toml("[capture.audio]\nenabled = false\nmicrophone = true\n").unwrap();
+        off.validate();
+        assert!(off.capture.audio.sources().is_empty());
+
+        let mut loud = Settings::from_toml("[capture.audio]\noutput_volume = 9\n").unwrap();
+        assert_eq!(loud.validate().len(), 1);
+        assert_eq!(loud.capture.audio.output_volume, 4.0);
     }
 
     #[test]

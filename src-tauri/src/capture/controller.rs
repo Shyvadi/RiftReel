@@ -22,6 +22,7 @@ use serde::Serialize;
 use tokio::sync::{watch, Mutex};
 use tokio::task::JoinHandle;
 
+use super::audio::{self, AudioRun, SourceConfig, SourceReport};
 use super::display::{self, Display};
 use super::ffmpeg::{
     self, CapturePlan, CaptureRun, EncoderFamily, Priority, Progress, StartEstimate,
@@ -37,6 +38,8 @@ pub struct CaptureConfig {
     pub bitrate_kbps: u32,
     /// An ffmpeg encoder name; `None` uses the probe's choice.
     pub encoder: Option<String>,
+    /// Audio sources to record (`[capture.audio]`); empty for video only.
+    pub audio: Vec<SourceConfig>,
     /// The ffmpeg to run; `None` finds the bundled one.
     pub ffmpeg: Option<PathBuf>,
     /// Match folders (`library/League of Legends`).
@@ -100,9 +103,25 @@ pub struct RecordingInfo {
     /// Why the recording ended before the match did.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub audio: Option<AudioInfo>,
     /// The match folder it was recorded into; the library renames it when saving.
     #[serde(skip)]
     pub folder: PathBuf,
+}
+
+/// The `recording.audio` block of `match.json`.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AudioInfo {
+    /// Track titles, track 0 (what plays by default) first.
+    pub tracks: Vec<String>,
+    /// How long before the first video frame the audio started.
+    pub lead_s: f64,
+    /// The remux moved the audio back by `lead_s`, into sync. (If it couldn't, the file
+    /// still has the audio that much late.)
+    pub aligned: bool,
+    pub sources: Vec<SourceReport>,
 }
 
 /// A finished recording.
@@ -147,9 +166,16 @@ pub trait CaptureBackend: Send + Sync + 'static {
     fn encoder(&self) -> BoxFuture<'_, Result<String, String>>;
     /// The encoder failed in practice: probe again next time.
     fn forget_encoder(&self) -> BoxFuture<'_, ()>;
+    /// Starts the audio sources (before ffmpeg, which reads their pipes).
+    fn start_audio(&self, sources: Vec<SourceConfig>) -> BoxFuture<'_, Result<AudioRun, String>>;
     fn start(&self, plan: CapturePlan) -> BoxFuture<'_, Result<CaptureRun, String>>;
-    /// Turns the finished fragmented file into a regular MP4.
-    fn finish_file(&self, file: PathBuf) -> BoxFuture<'_, Result<(), String>>;
+    /// Turns the finished fragmented file into a regular MP4, the audio moved back by
+    /// `audio_lead_s` into sync.
+    fn finish_file(
+        &self,
+        file: PathBuf,
+        audio_lead_s: Option<f64>,
+    ) -> BoxFuture<'_, Result<(), String>>;
 }
 
 /// The real backend: DXGI for the monitor, the ffmpeg sidecar for everything else.
@@ -224,6 +250,10 @@ impl CaptureBackend for FfmpegBackend {
         })
     }
 
+    fn start_audio(&self, sources: Vec<SourceConfig>) -> BoxFuture<'_, Result<AudioRun, String>> {
+        Box::pin(audio::start(sources))
+    }
+
     fn start(&self, plan: CapturePlan) -> BoxFuture<'_, Result<CaptureRun, String>> {
         Box::pin(async move {
             let binary = self.binary()?;
@@ -237,8 +267,12 @@ impl CaptureBackend for FfmpegBackend {
         })
     }
 
-    fn finish_file(&self, file: PathBuf) -> BoxFuture<'_, Result<(), String>> {
-        Box::pin(async move { ffmpeg::remux_to_mp4(self.binary()?, &file).await })
+    fn finish_file(
+        &self,
+        file: PathBuf,
+        audio_lead_s: Option<f64>,
+    ) -> BoxFuture<'_, Result<(), String>> {
+        Box::pin(async move { ffmpeg::remux_to_mp4(self.binary()?, &file, audio_lead_s).await })
     }
 }
 
@@ -422,6 +456,14 @@ async fn remove_folder(folder: PathBuf) {
     }
 }
 
+/// `later - earlier` in seconds, negative if `later` came first.
+fn signed_seconds(later: Instant, earlier: Instant) -> f64 {
+    match later.checked_duration_since(earlier) {
+        Some(ahead) => ahead.as_secs_f64(),
+        None => -(earlier - later).as_secs_f64(),
+    }
+}
+
 fn wall_ms(at: SystemTime) -> u64 {
     at.duration_since(UNIX_EPOCH)
         .map(|d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
@@ -486,12 +528,14 @@ impl Recorder {
                 self.set(CaptureState::Idle, None, None);
                 return None;
             }
-            match self.record(&request, &monitor, &encoder).await {
-                Attempt::Done(recording) => return recording,
+            // The second attempt goes without audio: sound must never cost the video.
+            match self.record(&request, &monitor, &encoder, !retried).await {
+                Attempt::Done(recording) => return recording.map(|r| *r),
                 // Nothing came out of ffmpeg: the stored encoder may be stale (driver,
-                // GPU change). Probe again and give it one more go.
+                // GPU change), or the audio pipes broke it. Probe again and give it one
+                // more go, video only.
                 Attempt::NothingRecorded(error) if !retried && !self.wants_out() => {
-                    tracing::warn!(%encoder, %error, "capture failed to start; probing again");
+                    tracing::warn!(%encoder, %error, "capture failed to start; probing again, without audio");
                     retried = true;
                     self.backend.forget_encoder().await;
                     tokio::time::sleep(self.timings.retry_after).await;
@@ -548,6 +592,7 @@ impl Recorder {
         request: &StartRequest,
         monitor: &Display,
         encoder: &str,
+        with_audio: bool,
     ) -> Attempt {
         let matches_dir = self.config.matches_dir.clone();
         let (started, queue) = (request.started_wall_ms, request.queue.clone());
@@ -563,17 +608,32 @@ impl Recorder {
             Err(e) => return Attempt::NothingRecorded(e.to_string()),
         };
         let file = folder.join(library::VIDEO_FILE);
+        // Audio first: ffmpeg opens the pipes before it starts the video.
+        let mut audio = None;
+        if with_audio && !self.config.audio.is_empty() {
+            match self.backend.start_audio(self.config.audio.clone()).await {
+                Ok(run) => audio = Some(run),
+                Err(error) => tracing::warn!(%error, "recording without audio"),
+            }
+        }
         let plan = CapturePlan {
             adapter: monitor.adapter,
             output: monitor.output,
             fps: self.config.fps,
             bitrate_kbps: self.config.bitrate_kbps,
             encoder: encoder.to_owned(),
+            audio: audio
+                .as_ref()
+                .map(|run| run.inputs.clone())
+                .unwrap_or_default(),
             file: file.clone(),
         };
         let run = match self.backend.start(plan).await {
             Ok(run) => run,
             Err(error) => {
+                if let Some(audio) = audio {
+                    (audio.stop)().await;
+                }
                 remove_folder(folder).await;
                 return Attempt::NothingRecorded(error);
             }
@@ -590,6 +650,18 @@ impl Recorder {
         self.set(CaptureState::Recording, Some(encoder), None);
 
         let outcome = self.drive(run).await;
+        // ffmpeg is done with the pipes.
+        let audio = match audio {
+            Some(run) => {
+                let tracks: Vec<String> = ffmpeg::audio_titles(&run.inputs)
+                    .into_iter()
+                    .map(str::to_owned)
+                    .collect();
+                let origin = run.origin;
+                Some((tracks, origin, (run.stop)().await))
+            }
+            None => None,
+        };
         let ended = SystemTime::now();
         let Some(started_at) = outcome.estimate.get() else {
             remove_folder(folder).await;
@@ -613,41 +685,57 @@ impl Recorder {
             .checked_sub(started_at.elapsed())
             .unwrap_or(UNIX_EPOCH);
         // The last frame, not ffmpeg's exit (it flushes and writes the index after it).
-        let end_wall = last
-            .out_time
-            .and_then(|t| start_wall.checked_add(t))
+        let video_s = last.frame as f64 / f64::from(self.config.fps.max(1));
+        let end_wall = start_wall
+            .checked_add(Duration::from_secs_f64(video_s))
             .unwrap_or(ended);
         tracing::info!(
             frames = last.frame,
             dropped = last.drop_frames,
             duplicated = last.dup_frames,
-            seconds = last.out_time.map(|t| t.as_secs()),
+            seconds = video_s as u64,
             megabytes = last.total_size.map(|b| b / 1_000_000),
             "recording stopped"
         );
         if let Some(error) = &outcome.error {
             tracing::warn!(%error, "ffmpeg stopped before the match ended; keeping what was recorded");
         }
+        // The audio started this long before the first video frame.
+        let lead_s = audio
+            .as_ref()
+            .map(|(_, origin, _)| signed_seconds(started_at, *origin));
 
         // The fragmented file plays as it is, but a player has to walk every fragment
-        // to open it. One stream copy now makes every later open instant.
+        // to open it. One stream copy now makes every later open instant, and moves the
+        // audio into sync.
         self.set(CaptureState::Saving, Some(encoder), None);
         let remux_started = Instant::now();
-        match self.backend.finish_file(file).await {
-            Ok(()) => tracing::debug!(
-                seconds = remux_started.elapsed().as_secs_f32(),
-                "recording remuxed"
-            ),
-            Err(error) => {
-                tracing::warn!(%error, "could not remux the recording; keeping the fragmented file")
+        let remuxed = match self.backend.finish_file(file, lead_s).await {
+            Ok(()) => {
+                tracing::debug!(
+                    seconds = remux_started.elapsed().as_secs_f32(),
+                    audio_lead_s = lead_s,
+                    "recording remuxed"
+                );
+                true
             }
-        }
+            Err(error) => {
+                tracing::warn!(%error, "could not remux the recording; keeping the fragmented file");
+                false
+            }
+        };
+        let audio = audio.map(|(tracks, _, sources)| AudioInfo {
+            tracks,
+            lead_s: lead_s.unwrap_or_default(),
+            aligned: remuxed,
+            sources,
+        });
         match &outcome.error {
             Some(error) => self.set(CaptureState::Failed, Some(encoder), Some(error.clone())),
             None => self.set(CaptureState::Idle, Some(encoder), None),
         }
 
-        Attempt::Done(Some(Recording {
+        Attempt::Done(Some(Box::new(Recording {
             started_at,
             info: RecordingInfo {
                 file: library::VIDEO_FILE.into(),
@@ -663,9 +751,10 @@ impl Recorder {
                 dropped_frames: last.drop_frames,
                 duplicated_frames: last.dup_frames,
                 error: outcome.error,
+                audio,
                 folder,
             },
-        }))
+        })))
     }
 
     /// Follows one ffmpeg run until it exits: progress in, stop or discard out.
@@ -680,7 +769,7 @@ impl Recorder {
         let mut commands_open = true;
         let mut progress_open = true;
         let mut discard = false;
-        let mut estimate = StartEstimate::default();
+        let mut estimate = StartEstimate::new(self.config.fps);
         let mut last = Progress::default();
         let mut lag = LagWatch::default();
         loop {
@@ -750,7 +839,7 @@ impl Recorder {
 }
 
 enum Attempt {
-    Done(Option<Recording>),
+    Done(Option<Box<Recording>>),
     NothingRecorded(String),
 }
 
@@ -802,6 +891,7 @@ mod tests {
     use tokio::sync::{mpsc, oneshot};
 
     use super::*;
+    use crate::capture::audio::{AudioInput, SourceKind, TimelineStats};
     use crate::capture::ffmpeg::ExitReport;
 
     /// How a fake ffmpeg run behaves.
@@ -823,6 +913,11 @@ mod tests {
         scripts: StdMutex<Vec<Script>>,
         plans: StdMutex<Vec<CapturePlan>>,
         finished: StdMutex<Vec<PathBuf>>,
+        /// The audio lead each remux was given.
+        leads: StdMutex<Vec<Option<f64>>>,
+        /// Audio sources started, and stopped.
+        audio_started: StdMutex<Vec<Vec<SourceConfig>>>,
+        audio_stopped: Arc<AtomicUsize>,
         forgotten: AtomicUsize,
     }
 
@@ -835,6 +930,9 @@ mod tests {
                 scripts: StdMutex::new(scripts),
                 plans: StdMutex::new(Vec::new()),
                 finished: StdMutex::new(Vec::new()),
+                leads: StdMutex::new(Vec::new()),
+                audio_started: StdMutex::new(Vec::new()),
+                audio_stopped: Arc::new(AtomicUsize::new(0)),
                 forgotten: AtomicUsize::new(0),
             })
         }
@@ -891,9 +989,53 @@ mod tests {
             })
         }
 
-        fn finish_file(&self, file: PathBuf) -> BoxFuture<'_, Result<(), String>> {
+        fn start_audio(
+            &self,
+            sources: Vec<SourceConfig>,
+        ) -> BoxFuture<'_, Result<AudioRun, String>> {
+            Box::pin(async move {
+                self.audio_started.lock().unwrap().push(sources.clone());
+                let stopped = self.audio_stopped.clone();
+                let inputs = sources
+                    .iter()
+                    .map(|s| AudioInput {
+                        kind: s.kind,
+                        pipe: format!("pipe-{:?}", s.kind),
+                        rate: 48_000,
+                        volume: s.volume,
+                    })
+                    .collect();
+                let reports = sources
+                    .iter()
+                    .map(|s| SourceReport {
+                        kind: s.kind,
+                        device: "Test device".into(),
+                        stats: TimelineStats::default(),
+                        error: None,
+                    })
+                    .collect::<Vec<_>>();
+                Ok(AudioRun {
+                    inputs,
+                    // The sources start just before ffmpeg's first frame.
+                    origin: Instant::now(),
+                    stop: Box::new(move || -> BoxFuture<'static, Vec<SourceReport>> {
+                        Box::pin(async move {
+                            stopped.fetch_add(1, Ordering::SeqCst);
+                            reports
+                        })
+                    }),
+                })
+            })
+        }
+
+        fn finish_file(
+            &self,
+            file: PathBuf,
+            audio_lead_s: Option<f64>,
+        ) -> BoxFuture<'_, Result<(), String>> {
             Box::pin(async move {
                 self.finished.lock().unwrap().push(file);
+                self.leads.lock().unwrap().push(audio_lead_s);
                 Ok(())
             })
         }
@@ -964,6 +1106,7 @@ mod tests {
             fps: 60,
             bitrate_kbps: 10_000,
             encoder: None,
+            audio: Vec::new(),
             ffmpeg: None,
             matches_dir: dir.join("matches"),
             probe_file: dir.join("capture-probe.json"),
@@ -1281,6 +1424,133 @@ mod tests {
         assert!(!controller.start(request()));
         assert!(controller.finish(true).await.is_none());
         assert!(backend.plans.lock().unwrap().is_empty());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[tokio::test]
+    async fn audio_rides_along_and_is_moved_into_sync() {
+        let backend = FakeBackend::new(vec![]);
+        let dir =
+            std::env::temp_dir().join(format!("downplayed-capture-audio-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let sources = vec![
+            SourceConfig {
+                kind: SourceKind::Desktop,
+                device: None,
+                volume: 1.0,
+            },
+            SourceConfig {
+                kind: SourceKind::Microphone,
+                device: Some("USB".into()),
+                volume: 0.5,
+            },
+        ];
+        let config = CaptureConfig {
+            enabled: true,
+            fps: 60,
+            bitrate_kbps: 10_000,
+            encoder: None,
+            audio: sources.clone(),
+            ffmpeg: None,
+            matches_dir: dir.join("matches"),
+            probe_file: dir.join("capture-probe.json"),
+        };
+        let mut controller =
+            CaptureController::new(config, backend.clone()).with_timings(CaptureTimings {
+                window_poll: Duration::from_millis(5),
+                window_wait: Duration::from_secs(5),
+                retry_after: Duration::from_millis(5),
+            });
+        controller.start(request());
+        wait_for_frames(&controller).await;
+        let recording = controller.finish(true).await.unwrap();
+
+        assert_eq!(*backend.audio_started.lock().unwrap(), [sources]);
+        let plan = backend.plans.lock().unwrap()[0].clone();
+        assert_eq!(
+            plan.audio.iter().map(|a| a.kind).collect::<Vec<_>>(),
+            [SourceKind::Desktop, SourceKind::Microphone]
+        );
+        assert_eq!(
+            backend.audio_stopped.load(Ordering::SeqCst),
+            1,
+            "stopped once ffmpeg was done"
+        );
+        // The sources started before the fake ffmpeg's first frame: a small positive lead,
+        // handed to the remux.
+        let lead = backend.leads.lock().unwrap()[0].expect("a lead to take out");
+        assert!((0.0..0.5).contains(&lead), "{lead}");
+        let audio = recording.info.audio.expect("audio described in match.json");
+        assert_eq!(audio.tracks, ["Mix", "Desktop", "Microphone"]);
+        assert_eq!(audio.lead_s, lead);
+        assert!(audio.aligned);
+        assert_eq!(audio.sources.len(), 2);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[tokio::test]
+    async fn a_start_that_fails_with_audio_retries_without_it() {
+        let backend = FakeBackend::new(vec![Script::NoFrames]);
+        let dir =
+            std::env::temp_dir().join(format!("downplayed-capture-noaudio-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let config = CaptureConfig {
+            enabled: true,
+            fps: 60,
+            bitrate_kbps: 10_000,
+            encoder: None,
+            audio: vec![SourceConfig {
+                kind: SourceKind::Desktop,
+                device: None,
+                volume: 1.0,
+            }],
+            ffmpeg: None,
+            matches_dir: dir.join("matches"),
+            probe_file: dir.join("capture-probe.json"),
+        };
+        let mut controller =
+            CaptureController::new(config, backend.clone()).with_timings(CaptureTimings {
+                window_poll: Duration::from_millis(5),
+                window_wait: Duration::from_secs(5),
+                retry_after: Duration::from_millis(5),
+            });
+        controller.start(request());
+        let second_attempt = async {
+            while backend.plans.lock().unwrap().len() < 2 {
+                tokio::time::sleep(Duration::from_millis(2)).await;
+            }
+        };
+        tokio::time::timeout(Duration::from_secs(5), second_attempt)
+            .await
+            .unwrap();
+        wait_for_frames(&controller).await;
+        let recording = controller.finish(true).await.expect("video, at least");
+        let plans = backend.plans.lock().unwrap().clone();
+        assert_eq!(plans[0].audio.len(), 1);
+        assert!(plans[1].audio.is_empty(), "the retry is video only");
+        assert_eq!(
+            backend.audio_stopped.load(Ordering::SeqCst),
+            1,
+            "the first attempt's sources were stopped"
+        );
+        assert!(recording.info.audio.is_none());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[tokio::test]
+    async fn no_audio_configured_means_none_started() {
+        let Setup {
+            dir,
+            backend,
+            mut controller,
+        } = setup("silent", FakeBackend::new(vec![]), true);
+        controller.start(request());
+        wait_for_frames(&controller).await;
+        let recording = controller.finish(true).await.unwrap();
+        assert!(backend.audio_started.lock().unwrap().is_empty());
+        assert!(backend.plans.lock().unwrap()[0].audio.is_empty());
+        assert_eq!(*backend.leads.lock().unwrap(), [None]);
+        assert!(recording.info.audio.is_none());
         std::fs::remove_dir_all(&dir).ok();
     }
 

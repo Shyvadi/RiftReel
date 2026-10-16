@@ -13,6 +13,7 @@ use std::time::{Duration, Instant};
 use futures_util::future::BoxFuture;
 use tokio::sync::{mpsc, oneshot, watch};
 
+use downplayed_lib::capture::audio::{AudioRun, SourceConfig};
 use downplayed_lib::capture::controller::{CaptureBackend, CaptureTimings};
 use downplayed_lib::capture::display::Display;
 use downplayed_lib::capture::ffmpeg::{CapturePlan, CaptureRun, ExitReport, Progress};
@@ -557,7 +558,15 @@ impl CaptureBackend for FakeCapture {
         })
     }
 
-    fn finish_file(&self, _file: PathBuf) -> BoxFuture<'_, Result<(), String>> {
+    fn start_audio(&self, _sources: Vec<SourceConfig>) -> BoxFuture<'_, Result<AudioRun, String>> {
+        Box::pin(async { Err("no audio in this test".to_owned()) })
+    }
+
+    fn finish_file(
+        &self,
+        _file: PathBuf,
+        _audio_lead_s: Option<f64>,
+    ) -> BoxFuture<'_, Result<(), String>> {
         Box::pin(async move {
             self.remuxed.fetch_add(1, Ordering::SeqCst);
             Ok(())
@@ -580,6 +589,7 @@ fn fake_controller(dir: &std::path::Path, backend: Arc<FakeCapture>) -> CaptureC
         fps: 60,
         bitrate_kbps: 10_000,
         encoder: None,
+        audio: Vec::new(),
         ffmpeg: None,
         matches_dir: dir.join("matches"),
         probe_file: dir.join("capture-probe.json"),
