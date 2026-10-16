@@ -1,14 +1,15 @@
 """Draws RiftReel's icon set into src-tauri/icons (original artwork).
 
-The mark: a white dragon coiled into a reel around a play button, biting the tip of its
+The mark: a white dragon coiled into a reel around the letter R, biting the tip of its
 own tail, on a rounded tile that runs from teal to blue. The same mark is used at every
 size, the tray icon (tray.png) included.
 
 It is constructed, not drawn by hand. The body lies between two circles about one
 centre. The tail tapers to its tip between two more circles, each tangent to one of
 those, so the taper flows out of the body. The head is the body bulged out to a slightly
-larger circle, cut square at the nose and chin around a narrow mouth. The horns are
-crescents of two arcs and the eye is a lens of two arcs; every other edge is straight.
+larger circle, cut square at the nose and chin around a narrow mouth. The horn is a
+crescent of two arcs and the eye is a lens of two arcs. The R is a stem, a bowl between
+two concentric half circles, and a leg. Every other edge is straight.
 
 The mark is built here as SVG paths (one per shape, each filled even-odd), which this
 script also writes to src-tauri/icons/source.svg and to ui/src/lib/mark.js for the
@@ -42,13 +43,13 @@ TIP, NECK = 293, 244
 # The head: how far it bulges past the body, where the nose and chin are cut, the corner
 # of the mouth, and how far each lip stands from the middle of the body.
 BULGE, NOSE, CHIN, MOUTH, LIP = 22, 303, 299, 286, 14
-# Horns: base from and to (angles), the tip's angle and height above the head, and the
-# radii of the front and back arcs.
-HORNS = [(262, 278, 238, 126, 210, 170), (249, 260, 226, 84, 170, 140)]
+# The horn: base from and to (angles), the tip's angle and height above the head, and
+# the radii of its front and back arcs.
+HORN = (256, 276, 232, 132, 230, 180)
 # The eye: its angle and radius, length, height and tilt.
 EYE = (284, 262, 48, 15, 3)
-# The play button in the middle: its height, and how far along each edge a corner rounds.
-PLAY_HEIGHT, PLAY_ROUND = 196, 34
+# The R in the middle: height, width, stroke, the bowl's height, and the leg's width.
+R_HEIGHT, R_WIDTH, R_STROKE, R_BOWL, R_LEG = 236, 176, 46, 140, 58
 
 
 def num(value):
@@ -77,6 +78,10 @@ def arc(centre, radius, start, end):
         p2 = (p3[0] + k * math.sin(b), p3[1] - k * math.cos(b))
         curves.append(f"C{xy(p1)} {xy(p2)} {xy(p3)}")
     return " ".join(curves)
+
+
+def polygon(points):
+    return "M" + " L".join(xy(p) for p in points) + " Z"
 
 
 def arc_between(p0, p1, radius, away_from):
@@ -155,33 +160,32 @@ def horn(start, end, tip_at, height, front, back):
     )
 
 
-def play():
-    """The play button, its corners rounded off PLAY_ROUND along each edge."""
-    width = PLAY_HEIGHT * math.sqrt(3) / 2
-    left = CENTRE[0] - width / 3
-    corners = [
-        (left, CENTRE[1] - PLAY_HEIGHT / 2),
-        (left + width, CENTRE[1]),
-        (left, CENTRE[1] + PLAY_HEIGHT / 2),
+def letter_r():
+    """The R, centred in the coil: its stem, its bowl (with the counter cut out) and its
+    leg, which reaches a little past the bowl."""
+    left, top = CENTRE[0] - R_WIDTH / 2, CENTRE[1] - R_HEIGHT / 2
+    right, bottom = left + R_WIDTH, top + R_HEIGHT
+    stem = left + R_STROKE
+    radius = R_BOWL / 2
+    bowl = (right - 18 - radius, top + radius)
+    counter = radius - R_STROKE
+    bowl_path = (
+        f"M{xy((stem - 2, top))} L{xy((bowl[0], top))} {arc(bowl, radius, -90, 90)} "
+        f"L{xy((stem - 2, top + R_BOWL))} Z "
+        f"M{xy((stem, top + R_STROKE))} L{xy((bowl[0], top + R_STROKE))} "
+        f"{arc(bowl, counter, -90, 90)} L{xy((stem, top + R_BOWL - R_STROKE))} Z"
+    )
+    leg_top, leg_left = top + R_BOWL - R_STROKE / 2, bowl[0] - R_LEG / 2 - 6
+    return [
+        polygon([(left, top), (stem, top), (stem, bottom), (left, bottom)]),
+        bowl_path,
+        polygon([(leg_left, leg_top), (leg_left + R_LEG, leg_top), (right, bottom), (right - R_LEG, bottom)]),
     ]
-
-    def toward(a, b):
-        d = math.dist(a, b)
-        return a[0] + (b[0] - a[0]) * PLAY_ROUND / d, a[1] + (b[1] - a[1]) * PLAY_ROUND / d
-
-    path = []
-    for i, corner in enumerate(corners):
-        come, go = toward(corner, corners[i - 1]), toward(corner, corners[(i + 1) % 3])
-        # A quadratic curve through the corner, written as a cubic.
-        c1 = tuple(p + (q - p) * 2 / 3 for p, q in zip(come, corner))
-        c2 = tuple(p + (q - p) * 2 / 3 for p, q in zip(go, corner))
-        path.append(f"{'M' if i == 0 else 'L'}{xy(come)} C{xy(c1)} {xy(c2)} {xy(go)}")
-    return " ".join(path) + " Z"
 
 
 def mark():
     """The mark's paths, one per shape."""
-    return [body(), tail(), head()] + [horn(*h) for h in HORNS] + [play()]
+    return [body(), tail(), head(), horn(*HORN)] + letter_r()
 
 
 def subpaths(path, scale):

@@ -367,8 +367,8 @@ screen; Ctrl + / Ctrl - zoom it) and destroyed when closed. A sidebar holds the 
 pages (Matches, Storage) and the live status (tracker, recorder, League client); the page
 fills the rest. Type starts at 16 px, controls are 40 px tall, and icons are line
 drawings of RiftReel's own. The app icon (`tools/make-icons.py`, which also writes
-`icons/source.svg` and the logo's paths) is a white dragon coiled into a reel around a
-play button, biting at its own tail, on a teal-to-blue tile, at every size down to the
+`icons/source.svg` and the logo's paths) is a white dragon coiled into a reel around the
+letter R, biting at its own tail, on a teal-to-blue tile, at every size down to the
 tray's.
 
 1. **Matches:** cards with champion icon, queue, W/L, K/D/A, duration and date.
