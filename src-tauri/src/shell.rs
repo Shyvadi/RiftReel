@@ -1,9 +1,13 @@
-//! Windows shell actions on clip files (doc 03 §9): send to the Recycle Bin, put on the
-//! clipboard as a file, "Save as…", show in Explorer. Each runs on a thread of its own
-//! with COM in a single-threaded apartment, owned by the window that asked (`owner`, a
-//! raw window handle), and returns when the shell is done.
+//! Windows shell actions on library files (doc 03 §8–9): send to the Recycle Bin (asking
+//! first about a file that can't be recycled, for the window's buttons; never deleting
+//! it, for the cleanup), put on the clipboard as a file, "Save as…", show in Explorer.
+//! Each runs on a thread of its own with COM in a single-threaded apartment, owned by the
+//! window that asked (`owner`, a raw window handle) if any, and returns when the shell is
+//! done.
 
 use std::path::{Path, PathBuf};
+
+pub use crate::library::janitor::Recycled;
 
 /// The clipboard's file-list format (`CF_HDROP`): a `DROPFILES` header, then each path in
 /// UTF-16 ending with a NUL, then one more NUL.
@@ -50,6 +54,13 @@ pub fn recycle(paths: &[PathBuf], owner: Option<isize>) -> Result<bool, String> 
     imp::recycle(paths.to_vec(), owner)
 }
 
+/// Sends one file to the Recycle Bin with no window and no question, for the cleanup,
+/// which runs unattended. Unlike [`recycle`] nothing is ever asked: a file Windows can't
+/// recycle is kept ([`Recycled::NotRecyclable`]), never deleted.
+pub fn recycle_strict(path: &Path) -> Recycled {
+    imp::recycle_strict(path.to_owned())
+}
+
 /// Puts `paths` on the clipboard as files, to paste in Explorer, Discord, a chat…
 pub fn copy_files(paths: &[PathBuf], owner: Option<isize>) -> Result<(), String> {
     imp::copy_files(drop_files(paths), owner)
@@ -83,9 +94,11 @@ pub fn reveal(path: &Path) -> Result<(), String> {
 mod imp {
     use std::ffi::c_void;
     use std::path::PathBuf;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
 
-    use windows::core::{w, HSTRING};
-    use windows::Win32::Foundation::{GlobalFree, ERROR_CANCELLED, HANDLE, HGLOBAL, HWND};
+    use windows::core::{implement, w, Ref, HRESULT, HSTRING, PCWSTR};
+    use windows::Win32::Foundation::{GlobalFree, ERROR_CANCELLED, E_ABORT, HANDLE, HGLOBAL, HWND};
     use windows::Win32::System::Com::{
         CoCreateInstance, CoInitializeEx, CoTaskMemFree, CoUninitialize, CLSCTX_INPROC_SERVER,
         COINIT_APARTMENTTHREADED, COINIT_DISABLE_OLE1DDE,
@@ -97,11 +110,14 @@ mod imp {
     use windows::Win32::System::Ole::{CF_HDROP, DROPEFFECT_COPY};
     use windows::Win32::UI::Shell::Common::COMDLG_FILTERSPEC;
     use windows::Win32::UI::Shell::{
-        FileOperation, FileSaveDialog, IFileOperation, IFileSaveDialog, IShellItem,
-        SHCreateItemFromParsingName, FOFX_RECYCLEONDELETE, FOF_ALLOWUNDO, FOF_NOCONFIRMATION,
+        FileOperation, FileSaveDialog, IFileOperation, IFileOperationProgressSink,
+        IFileOperationProgressSink_Impl, IFileSaveDialog, IShellItem, SHCreateItemFromParsingName,
+        FOFX_EARLYFAILURE, FOFX_RECYCLEONDELETE, FOF_ALLOWUNDO, FOF_NOCONFIRMATION, FOF_NO_UI,
         FOF_SILENT, FOF_WANTNUKEWARNING, FOS_FORCEFILESYSTEM, FOS_OVERWRITEPROMPT,
-        FOS_PATHMUSTEXIST, SIGDN_FILESYSPATH,
+        FOS_PATHMUSTEXIST, SIGDN_FILESYSPATH, TSF_DELETE_RECYCLE_IF_POSSIBLE,
     };
+
+    use super::Recycled;
 
     fn window(owner: Option<isize>) -> Option<HWND> {
         owner.map(|raw| HWND(raw as *mut c_void))
@@ -163,6 +179,192 @@ mod imp {
                 Ok(!aborted.as_bool())
             }
         })
+    }
+
+    /// What the shell told [`RecycleOnly`] about its one item.
+    #[derive(Default)]
+    struct DeleteSeen {
+        /// The shell was about to delete it for good, and was stopped.
+        refused: AtomicBool,
+        /// It is in the Recycle Bin.
+        recycled: AtomicBool,
+    }
+
+    /// Stops any delete that wouldn't go to the Recycle Bin: the shell leaves
+    /// `TSF_DELETE_RECYCLE_IF_POSSIBLE` out of the flags of an item it is about to destroy
+    /// (too big for the bin, a drive without one), and an error from `PreDeleteItem`
+    /// cancels it.
+    #[implement(IFileOperationProgressSink)]
+    struct RecycleOnly(Arc<DeleteSeen>);
+
+    impl IFileOperationProgressSink_Impl for RecycleOnly_Impl {
+        fn PreDeleteItem(&self, flags: u32, _item: Ref<IShellItem>) -> windows::core::Result<()> {
+            if flags & TSF_DELETE_RECYCLE_IF_POSSIBLE.0 as u32 == 0 {
+                self.0.refused.store(true, Ordering::SeqCst);
+                return Err(E_ABORT.into());
+            }
+            Ok(())
+        }
+
+        fn PostDeleteItem(
+            &self,
+            _flags: u32,
+            _item: Ref<IShellItem>,
+            result: HRESULT,
+            in_bin: Ref<IShellItem>,
+        ) -> windows::core::Result<()> {
+            // The new item is the file's place in the Recycle Bin.
+            if result.is_ok() && !in_bin.is_null() {
+                self.0.recycled.store(true, Ordering::SeqCst);
+            }
+            Ok(())
+        }
+
+        fn StartOperations(&self) -> windows::core::Result<()> {
+            Ok(())
+        }
+        fn FinishOperations(&self, _result: HRESULT) -> windows::core::Result<()> {
+            Ok(())
+        }
+        fn PreRenameItem(
+            &self,
+            _flags: u32,
+            _item: Ref<IShellItem>,
+            _name: &PCWSTR,
+        ) -> windows::core::Result<()> {
+            Ok(())
+        }
+        fn PostRenameItem(
+            &self,
+            _flags: u32,
+            _item: Ref<IShellItem>,
+            _name: &PCWSTR,
+            _result: HRESULT,
+            _created: Ref<IShellItem>,
+        ) -> windows::core::Result<()> {
+            Ok(())
+        }
+        fn PreMoveItem(
+            &self,
+            _flags: u32,
+            _item: Ref<IShellItem>,
+            _folder: Ref<IShellItem>,
+            _name: &PCWSTR,
+        ) -> windows::core::Result<()> {
+            Ok(())
+        }
+        fn PostMoveItem(
+            &self,
+            _flags: u32,
+            _item: Ref<IShellItem>,
+            _folder: Ref<IShellItem>,
+            _name: &PCWSTR,
+            _result: HRESULT,
+            _created: Ref<IShellItem>,
+        ) -> windows::core::Result<()> {
+            Ok(())
+        }
+        fn PreCopyItem(
+            &self,
+            _flags: u32,
+            _item: Ref<IShellItem>,
+            _folder: Ref<IShellItem>,
+            _name: &PCWSTR,
+        ) -> windows::core::Result<()> {
+            Ok(())
+        }
+        fn PostCopyItem(
+            &self,
+            _flags: u32,
+            _item: Ref<IShellItem>,
+            _folder: Ref<IShellItem>,
+            _name: &PCWSTR,
+            _result: HRESULT,
+            _created: Ref<IShellItem>,
+        ) -> windows::core::Result<()> {
+            Ok(())
+        }
+        fn PreNewItem(
+            &self,
+            _flags: u32,
+            _folder: Ref<IShellItem>,
+            _name: &PCWSTR,
+        ) -> windows::core::Result<()> {
+            Ok(())
+        }
+        fn PostNewItem(
+            &self,
+            _flags: u32,
+            _folder: Ref<IShellItem>,
+            _name: &PCWSTR,
+            _template: &PCWSTR,
+            _attributes: u32,
+            _result: HRESULT,
+            _item: Ref<IShellItem>,
+        ) -> windows::core::Result<()> {
+            Ok(())
+        }
+        fn UpdateProgress(&self, _total: u32, _done: u32) -> windows::core::Result<()> {
+            Ok(())
+        }
+        fn ResetTimer(&self) -> windows::core::Result<()> {
+            Ok(())
+        }
+        fn PauseTimer(&self) -> windows::core::Result<()> {
+            Ok(())
+        }
+        fn ResumeTimer(&self) -> windows::core::Result<()> {
+            Ok(())
+        }
+    }
+
+    pub fn recycle_strict(path: PathBuf) -> Recycled {
+        let seen = Arc::new(DeleteSeen::default());
+        let watched = seen.clone();
+        let target = path.clone();
+        let performed = on_sta(move || {
+            // SAFETY: COM is initialised on this thread; every pointer outlives its call.
+            unsafe {
+                let operation: IFileOperation =
+                    CoCreateInstance(&FileOperation, None, CLSCTX_INPROC_SERVER)
+                        .map_err(|e| e.to_string())?;
+                // No window, no question, no error box; stop at the first failure.
+                operation
+                    .SetOperationFlags(
+                        FOF_ALLOWUNDO | FOFX_RECYCLEONDELETE | FOF_NO_UI | FOFX_EARLYFAILURE,
+                    )
+                    .map_err(|e| e.to_string())?;
+                let item: IShellItem =
+                    SHCreateItemFromParsingName(&HSTRING::from(target.as_os_str()), None)
+                        .map_err(|e| e.to_string())?;
+                let sink: IFileOperationProgressSink = RecycleOnly(watched).into();
+                operation
+                    .DeleteItem(&item, &sink)
+                    .map_err(|e| e.to_string())?;
+                let result = operation.PerformOperations();
+                let aborted = operation
+                    .GetAnyOperationsAborted()
+                    .map_or(true, |aborted| aborted.as_bool());
+                match result {
+                    Ok(()) if !aborted => Ok(()),
+                    Ok(()) => Err("the Recycle Bin operation was stopped".to_owned()),
+                    Err(e) => Err(e.to_string()),
+                }
+            }
+        });
+        if seen.refused.load(Ordering::SeqCst) {
+            return Recycled::NotRecyclable;
+        }
+        match performed {
+            Err(error) => Recycled::Failed(error),
+            Ok(()) if path.exists() => Recycled::Failed("the file is still there".into()),
+            Ok(()) => {
+                if !seen.recycled.load(Ordering::SeqCst) {
+                    tracing::error!("the shell reported no Recycle Bin item for a removed file");
+                }
+                Recycled::Done
+            }
+        }
     }
 
     pub fn copy_files(list: Vec<u8>, owner: Option<isize>) -> Result<(), String> {
@@ -259,10 +461,16 @@ mod imp {
 mod imp {
     use std::path::PathBuf;
 
+    use super::Recycled;
+
     const UNSUPPORTED: &str = "only supported on Windows";
 
     pub fn recycle(_paths: Vec<PathBuf>, _owner: Option<isize>) -> Result<bool, String> {
         Err(UNSUPPORTED.into())
+    }
+
+    pub fn recycle_strict(_path: PathBuf) -> Recycled {
+        Recycled::Failed(UNSUPPORTED.into())
     }
 
     pub fn copy_files(_list: Vec<u8>, _owner: Option<isize>) -> Result<(), String> {

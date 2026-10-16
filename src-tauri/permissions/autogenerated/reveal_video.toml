@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-reveal-video"
+description = "Enables the reveal_video command without any pre-configured scope."
+commands.allow = ["reveal_video"]
+
+[[permission]]
+identifier = "deny-reveal-video"
+description = "Denies the reveal_video command without any pre-configured scope."
+commands.deny = ["reveal_video"]

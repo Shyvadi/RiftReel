@@ -305,12 +305,33 @@ with `time` + `timing.past/future`) to recover markers. Ignore every `owad*`, `o
 
 ## 8. Storage management
 
-- Two quotas: **full matches** (default 150 GB or 30 days) and **clips** (default
-  unlimited, warn at 50 GB). Favorites are never auto-deleted.
-- The janitor runs at match end and hourly while idle. It deletes the oldest
-  unprotected full matches first and removes empty folders and orphaned thumbnails.
-- Low-disk guard: refuse to start recording below a threshold (default 20 GB free) and
-  show one notification.
+- **The cleanup (janitor) is off until the user turns it on** (the Storage view, or
+  `[storage] cleanup = true`). Full-match videos older than `keep_days` (30) go, then the
+  oldest while the full matches take more than `full_matches_gb` (150 GB). Favorites
+  count toward that limit but are never removed. Clips are never removed; the window
+  only warns above `clips_warn_gb` (50 GB). An imported (Outplayed) video is left alone
+  unless the user allows it for that import.
+- It runs after each match, once the game has closed, and every hour, never while
+  `League of Legends.exe` runs: it checks every 2 s during a run and stops if a game
+  starts. A run and the window's edits to matches go one at a time.
+- Everything goes to the Recycle Bin, one file at a time, with no window and no
+  question. A progress sink stops any delete the shell would do outright (an item
+  without `TSF_DELETE_RECYCLE_IF_POSSIBLE`: too big for the bin, or a drive without
+  one). Such a video is kept and flagged in the Storage view, where the user shows it in
+  Explorer, keeps it (a favorite) or lets the cleanup try again. A file that couldn't be
+  moved (in use) is tried again on the next run.
+- A match whose video went keeps its folder, stats, markers and clips. Its
+  `match.json` gets `videoRemoved {atMs, reason, bytes}` and the index follows. A run
+  also recycles clip thumbnails no clip lists (once 10 minutes old) and removes match
+  folders without a single file (once an hour old).
+- The Storage view shows what the library takes and the free space, plus a dry run of
+  the limits being edited: each video the cleanup would remove and the space freed.
+  `downplayed-dev cleanup` prints the same dry run. The cleanup's notes (flagged videos,
+  last run) are `cleanup.json` in the library's root.
+- Low-disk guard: no recording starts with less than `min_free_gb` (20) free on the
+  library's drive, and one stops cleanly, keeping its file, below `stop_free_gb` (2).
+  Either is said once, after the game: in the window if it is open, else as a Windows
+  notification. Nothing is shown during a game.
 - First run after import: show the size breakdown (League 430 GB on this machine) and
   offer "keep highlights, delete full matches older than N days".
 
@@ -325,9 +346,11 @@ with `time` + `timing.past/future`) to recover markers. Ignore every `owad*`, `o
    highlight from the recording, ✂ to save a highlight as a clip, mark in/out to save
    any part, and "favorite".
 3. **Clips:** grid, favorites, reveal in Explorer, copy file to clipboard.
-4. **Settings:** capture (resolution, fps, bitrate, encoder), audio (devices, game-only),
-   events (per-type toggle + pre/post-roll), storage, import.
-5. **In-game toasts (optional):** a native click-through layered window showing
+4. **Storage:** what the library takes, the cleanup's limits with a dry run of them,
+   and the videos it couldn't recycle (§8).
+5. **Settings:** capture (resolution, fps, bitrate, encoder), audio (devices, game-only),
+   events (per-type toggle + pre/post-roll), import.
+6. **In-game toasts (optional):** a native click-through layered window showing
    "Double kill" for 3 s. Off by default. No webview in game.
 
 Champion icons: bundle a small icon set or fetch once from Data Dragon and cache it.

@@ -1,22 +1,24 @@
 //! The tray application. It starts with no window and opens one on demand, which is
 //! destroyed when closed. The tracker runs in the background the whole time and records
 //! each match; each match it finishes is saved to the library and, by default, opened
-//! for review once the game has closed.
+//! for review once the game has closed. The cleanup, when the user has turned it on,
+//! runs after each match and every hour, never during a game.
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, PoisonError};
-use std::time::Duration;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, RunEvent};
-use tokio::sync::{mpsc, watch};
+use tokio::sync::{mpsc, watch, Notify};
 
 use crate::capture::{ffmpeg, CaptureConfig, CaptureController};
 use crate::league::client::scan_processes;
 use crate::league::live::LiveClient;
+use crate::library::janitor::{Overview, RunReport};
 use crate::library::{Facets, Library, MatchPage, MatchQuery, Removal};
 use crate::logging;
-use crate::settings::{AppPaths, LoadOutcome, Settings};
+use crate::settings::{AppPaths, LoadOutcome, Settings, SettingsError, StorageSettings};
 use crate::shell;
 use crate::thumbnails::Thumbnails;
 use crate::tracker::runtime::{watch_league, Timings, TrackerRuntime, TrackerStatus};
@@ -36,6 +38,12 @@ const REVIEW_WAIT_MAX: Duration = Duration::from_secs(15 * 60);
 /// How long a message waits for the game to close before it is dropped.
 const NOTICE_WAIT_MAX: Duration = Duration::from_secs(6 * 60 * 60);
 
+/// The cleanup's first look after startup, then how often it looks again.
+const CLEANUP_FIRST: Duration = Duration::from_secs(5 * 60);
+const CLEANUP_EVERY: Duration = Duration::from_secs(60 * 60);
+/// While the cleanup runs, how often it checks that no game has started.
+const CLEANUP_GAME_CHECK: Duration = Duration::from_secs(2);
+
 /// Set to open the window at startup (development; normally only the tray opens it).
 /// `hidden` creates it invisible, for smoke tests.
 const OPEN_WINDOW_ENV: &str = "DOWNPLAYED_OPEN_WINDOW";
@@ -50,9 +58,24 @@ struct AppState {
     notice: Mutex<Option<String>>,
     /// The ffmpeg that cuts clips (the one capture uses).
     ffmpeg: Option<PathBuf>,
-    /// Edits to a saved `match.json` (a clip saved, a favorite) go one at a time; a clip
-    /// is numbered after the ones already there.
+    /// Edits to a saved `match.json` (a clip saved, a favorite, a cleanup run) go one at
+    /// a time; a clip is numbered after the ones already there.
     match_edits: tokio::sync::Mutex<()>,
+    /// `[storage]` as it is now: the window can change the cleanup's part.
+    storage: Mutex<StorageSettings>,
+    /// The settings file loaded, or was created. An unusable one is never rewritten.
+    settings_writable: bool,
+    /// Wakes the cleanup: a match was saved, or the user turned it on.
+    cleanup_wake: Notify,
+}
+
+impl AppState {
+    fn storage(&self) -> StorageSettings {
+        self.storage
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
 }
 
 #[derive(Serialize)]
@@ -316,6 +339,196 @@ async fn export_clip(
     Ok(Some(target.display().to_string()))
 }
 
+/// Marks a saved match as a favorite, or not: the cleanup never removes a favorite's
+/// video.
+#[tauri::command]
+async fn set_match_favorite(
+    id: String,
+    favorite: bool,
+    app: AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    let _one_at_a_time = state.match_edits.lock().await;
+    let library = state.library.clone();
+    let match_id = id.clone();
+    tauri::async_runtime::spawn_blocking(move || library.set_match_favorite(&match_id, favorite))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())?;
+    let _ = app.emit("matches-changed", &id);
+    let _ = app.emit("storage-changed", ());
+    Ok(())
+}
+
+/// Opens Explorer on a saved match's video, selected.
+#[tauri::command]
+async fn reveal_video(id: String, state: tauri::State<'_, AppState>) -> Result<(), String> {
+    let library = state.library.clone();
+    let path = tauri::async_runtime::spawn_blocking(move || library.video_file(&id))
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or("this match has no video")?;
+    shell::reveal(&path)
+}
+
+/// The cleanup's settings, as the window edits them.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CleanupSettings {
+    cleanup: bool,
+    keep_days: u32,
+    full_matches_gb: f64,
+    clips_warn_gb: f64,
+}
+
+impl CleanupSettings {
+    fn of(storage: &StorageSettings) -> Self {
+        Self {
+            cleanup: storage.cleanup,
+            keep_days: storage.keep_days,
+            full_matches_gb: storage.full_matches_gb,
+            clips_warn_gb: storage.clips_warn_gb,
+        }
+    }
+
+    fn apply(self, storage: &mut StorageSettings) {
+        storage.cleanup = self.cleanup;
+        storage.keep_days = self.keep_days;
+        storage.full_matches_gb = self.full_matches_gb;
+        storage.clips_warn_gb = self.clips_warn_gb;
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct StorageOverview {
+    /// As saved.
+    settings: CleanupSettings,
+    /// The window may change them: the settings file is usable.
+    settings_writable: bool,
+    /// Free space on the library's drive.
+    free_bytes: Option<u64>,
+    game_running: bool,
+    #[serde(flatten)]
+    cleanup: Overview,
+}
+
+/// The storage view: what the library takes, the cleanup's settings, what it left for
+/// the user, and its dry run under `draft` (settings being edited; else the saved ones).
+/// Changes nothing.
+#[tauri::command]
+async fn storage_overview(
+    draft: Option<CleanupSettings>,
+    state: tauri::State<'_, AppState>,
+) -> Result<StorageOverview, String> {
+    let saved = state.storage();
+    let mut storage = saved.clone();
+    if let Some(draft) = draft {
+        draft.apply(&mut storage);
+        storage.validate();
+    }
+    let rules = storage.janitor_rules();
+    let library = state.library.clone();
+    let matches_dir = state.paths.matches_dir.clone();
+    let (cleanup, free_bytes, game_running) = tauri::async_runtime::spawn_blocking(move || {
+        (
+            library.cleanup_overview(&rules, now_ms()),
+            crate::disk::free_space(&matches_dir),
+            scan_processes().game_running,
+        )
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+    Ok(StorageOverview {
+        settings: CleanupSettings::of(&saved),
+        settings_writable: state.settings_writable,
+        free_bytes,
+        game_running,
+        cleanup,
+    })
+}
+
+/// Saves the cleanup's settings in `settings.toml`, the rest of the file as it is now.
+/// Turning the cleanup on runs it as soon as no game is running.
+#[tauri::command]
+async fn set_cleanup(
+    settings: CleanupSettings,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    if !state.settings_writable {
+        return Err(format!(
+            "{} couldn't be read when Downplayed started; fix it (or remove it for the defaults), then restart Downplayed.",
+            state.paths.settings_file.display()
+        ));
+    }
+    let before = state.storage();
+    let mut storage = before.clone();
+    settings.apply(&mut storage);
+    let problems = storage.validate();
+    if !problems.is_empty() {
+        return Err(problems.join("; "));
+    }
+    let path = state.paths.settings_file.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut file = match Settings::load(&path) {
+            Ok(file) => file,
+            Err(SettingsError::Io { source, .. })
+                if source.kind() == std::io::ErrorKind::NotFound =>
+            {
+                Settings::default()
+            }
+            Err(e) => return Err(format!("{e}; fix it, then try again")),
+        };
+        settings.apply(&mut file.storage);
+        file.save(&path)
+            .map_err(|e| format!("could not save {}: {e}", path.display()))
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+    *state.storage.lock().unwrap_or_else(PoisonError::into_inner) = storage;
+    tracing::info!(
+        cleanup = settings.cleanup,
+        keep_days = settings.keep_days,
+        full_matches_gb = settings.full_matches_gb,
+        clips_warn_gb = settings.clips_warn_gb,
+        "cleanup settings saved"
+    );
+    if settings.cleanup && !before.cleanup {
+        state.cleanup_wake.notify_one();
+    }
+    Ok(())
+}
+
+/// Runs the cleanup now: it must be on, and League not running.
+#[tauri::command]
+async fn run_cleanup(
+    app: AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<RunReport, String> {
+    if !state.storage().cleanup {
+        return Err("The cleanup is off.".into());
+    }
+    if game_running().await {
+        return Err("Not while League is running.".into());
+    }
+    clean_up(&app).await
+}
+
+/// Lets the cleanup try a video it couldn't recycle again, on its next run.
+#[tauri::command]
+async fn retry_cleanup(
+    id: String,
+    app: AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    let library = state.library.clone();
+    tauri::async_runtime::spawn_blocking(move || library.retry_cleanup(&id))
+        .await
+        .map_err(|e| e.to_string())?;
+    let _ = app.emit("storage-changed", ());
+    Ok(())
+}
+
 pub fn run() {
     let paths = AppPaths::resolve();
     let loaded = Settings::load_or_create(&paths.settings_file);
@@ -339,7 +552,15 @@ pub fn run() {
     for warning in &loaded.warnings {
         tracing::warn!("{warning}");
     }
+    let settings_writable = !matches!(loaded.outcome, LoadOutcome::Invalid(_));
     let settings = loaded.settings;
+    if settings.storage.cleanup {
+        tracing::info!(
+            keep_days = settings.storage.keep_days,
+            full_matches_gb = settings.storage.full_matches_gb,
+            "cleanup is on"
+        );
+    }
     let library = Arc::new(Library::new(
         paths.matches_dir.clone(),
         paths.recordings_dir.clone(),
@@ -360,6 +581,9 @@ pub fn run() {
             notice: Mutex::new(None),
             ffmpeg: ffmpeg.clone(),
             match_edits: tokio::sync::Mutex::new(()),
+            storage: Mutex::new(settings.storage.clone()),
+            settings_writable,
+            cleanup_wake: Notify::new(),
         })
         .invoke_handler(tauri::generate_handler![
             get_status,
@@ -372,7 +596,13 @@ pub fn run() {
             reveal_clip,
             delete_clip,
             copy_clip,
-            export_clip
+            export_clip,
+            set_match_favorite,
+            reveal_video,
+            storage_overview,
+            set_cleanup,
+            run_cleanup,
+            retry_cleanup
         ])
         .setup(move |app| {
             // The review's <video> streams match.mp4 from here, in ranged reads; the
@@ -406,6 +636,7 @@ pub fn run() {
                 status_tx,
                 status_rx,
             );
+            tauri::async_runtime::spawn(janitor(app.handle().clone()));
             if let Some(value) = std::env::var_os(OPEN_WINDOW_ENV) {
                 tray::create_main_window(app.handle(), value != "hidden");
             }
@@ -487,15 +718,19 @@ fn start_tracker(
     });
 }
 
+/// Whether `League of Legends.exe` is running (a game is being played).
+async fn game_running() -> bool {
+    tauri::async_runtime::spawn_blocking(|| scan_processes().game_running)
+        .await
+        .unwrap_or(true)
+}
+
 /// Waits until `League of Legends.exe` isn't running, checking every few seconds. Returns
 /// `false` if it still is after `max`.
 async fn game_closed(max: Duration) -> bool {
     let started = tokio::time::Instant::now();
     loop {
-        let running = tauri::async_runtime::spawn_blocking(|| scan_processes().game_running)
-            .await
-            .unwrap_or(true);
-        if !running {
+        if !game_running().await {
             return true;
         }
         if started.elapsed() >= max {
@@ -505,6 +740,21 @@ async fn game_closed(max: Duration) -> bool {
     }
 }
 
+/// Shows a message in the window: now if one is open, else when it next opens.
+/// Returns whether one is open.
+fn tell_window(app: &AppHandle, message: &str) -> bool {
+    if let Some(state) = app.try_state::<AppState>() {
+        // A window still loading (or opened later) asks for it; one already up gets
+        // the event.
+        *state.notice.lock().unwrap_or_else(PoisonError::into_inner) = Some(message.to_owned());
+    }
+    let open = app.get_webview_window(tray::MAIN_WINDOW).is_some();
+    if open {
+        let _ = app.emit("notice", message);
+    }
+    open
+}
+
 /// Tells the user something once the game has closed (never during it): in the window
 /// if one is open, else as a Windows notification.
 async fn tell_after_game(app: AppHandle, message: String) {
@@ -512,11 +762,7 @@ async fn tell_after_game(app: AppHandle, message: String) {
         return;
     }
     if app.get_webview_window(tray::MAIN_WINDOW).is_some() {
-        if let Some(state) = app.try_state::<AppState>() {
-            // A window still loading asks for it; one already up gets the event.
-            *state.notice.lock().unwrap_or_else(PoisonError::into_inner) = Some(message.clone());
-        }
-        let _ = app.emit("notice", &message);
+        tell_window(&app, &message);
         return;
     }
     use tauri_plugin_notification::NotificationExt;
@@ -557,6 +803,9 @@ async fn save_matches(
         tracing::info!(%id, "match saved");
         thumbnails.request(id.clone());
         let _ = app.emit("matches-changed", &id);
+        if let Some(state) = app.try_state::<AppState>() {
+            state.cleanup_wake.notify_one();
+        }
         if open_review {
             tauri::async_runtime::spawn(open_review_after_game(app.clone(), id));
         }
@@ -581,4 +830,88 @@ async fn open_review_after_game(app: AppHandle, id: String) {
         }
         tray::create_main_window(&app, true);
     }
+}
+
+/// The cleanup, while it is on: after each match once its game has closed, and every
+/// hour, never while a game is running.
+async fn janitor(app: AppHandle) {
+    let mut hourly =
+        tokio::time::interval_at(tokio::time::Instant::now() + CLEANUP_FIRST, CLEANUP_EVERY);
+    hourly.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    loop {
+        let Some(state) = app.try_state::<AppState>() else {
+            return;
+        };
+        tokio::select! {
+            _ = hourly.tick() => {}
+            () = state.cleanup_wake.notified() => {
+                if !game_closed(REVIEW_WAIT_MAX).await {
+                    continue;
+                }
+            }
+        }
+        let on = state.storage().cleanup;
+        if !on || game_running().await {
+            continue;
+        }
+        if let Err(error) = clean_up(&app).await {
+            tracing::warn!(%error, "the cleanup failed");
+        }
+    }
+}
+
+/// One cleanup run, between the window's edits to matches. It stops if a game starts.
+async fn clean_up(app: &AppHandle) -> Result<RunReport, String> {
+    let state = app.state::<AppState>();
+    let rules = state.storage().janitor_rules();
+    let _one_at_a_time = state.match_edits.lock().await;
+    let library = state.library.clone();
+    let report = tauri::async_runtime::spawn_blocking(move || {
+        let mut checked: Option<Instant> = None;
+        let mut playing = false;
+        library.cleanup(&rules, now_ms(), shell::recycle_strict, || {
+            if checked.is_none_or(|at| at.elapsed() >= CLEANUP_GAME_CHECK) {
+                playing = scan_processes().game_running;
+                checked = Some(Instant::now());
+            }
+            !playing
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+    tracing::info!(
+        removed = report.removed.len(),
+        freed_mb = report.freed_bytes / 1_000_000,
+        kept = report.kept.len(),
+        failed = report.failed.len(),
+        thumbnails = report.thumbnails,
+        folders = report.folders,
+        stopped = report.stopped,
+        "cleanup ran"
+    );
+    for failed in &report.failed {
+        tracing::debug!(why = %failed.why, "a video wasn't moved; trying again next time");
+    }
+    if !report.removed.is_empty() {
+        let _ = app.emit("matches-changed", "");
+    }
+    let _ = app.emit("storage-changed", ());
+    if !report.kept.is_empty() {
+        let count = report.kept.len();
+        let videos = if count == 1 { "video" } else { "videos" };
+        tell_window(
+            app,
+            &format!(
+                "The cleanup couldn't send {count} {videos} to the Recycle Bin (too big for it), so nothing was deleted. Storage has them for you to decide."
+            ),
+        );
+    }
+    Ok(report)
+}
+
+fn now_ms() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
+        .unwrap_or_default()
 }

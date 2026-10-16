@@ -13,6 +13,12 @@ fn main() {
         "delete_clip",
         "copy_clip",
         "export_clip",
+        "set_match_favorite",
+        "reveal_video",
+        "storage_overview",
+        "set_cleanup",
+        "run_cleanup",
+        "retry_cleanup",
     ]);
     tauri_build::try_build(tauri_build::Attributes::new().app_manifest(manifest))
         .expect("tauri-build failed");

@@ -32,6 +32,11 @@
 //! downplayed-dev audio
 //!     List the audio output and input devices (what `[capture.audio]` device names
 //!     match against). Nothing is recorded.
+//! downplayed-dev library [--cold]
+//!     Time the library index (rebuilt from scratch with --cold) and a few list queries.
+//! downplayed-dev cleanup
+//!     The cleanup's dry run under the settings' `[storage]` limits: each full-match
+//!     video it would send to the Recycle Bin, and the space freed. Changes nothing.
 //! ```
 //!
 //! `--extras` enables the Voidgrubs/first blood/ace/shutdown/spree markers; `--team` also
@@ -46,6 +51,7 @@ use downplayed_lib::capture::controller::CaptureTimings;
 use downplayed_lib::capture::{
     display, ffmpeg, probe, wasapi, CaptureController, CaptureState, StartRequest,
 };
+use downplayed_lib::disk;
 use downplayed_lib::league::client::{self, LcuClient};
 use downplayed_lib::league::live::{LiveClient, EVENT_POLL_INTERVAL};
 use downplayed_lib::library::{self, Library, MatchQuery, Sort};
@@ -66,7 +72,8 @@ const USAGE: &str = "usage:
   downplayed-dev probe [--force]
   downplayed-dev capture [seconds] [out-dir] [--stop-on-game]
   downplayed-dev audio
-  downplayed-dev library [--cold]";
+  downplayed-dev library [--cold]
+  downplayed-dev cleanup";
 
 #[derive(Default)]
 struct Flags {
@@ -131,6 +138,7 @@ async fn main() -> ExitCode {
             "audio" => run_audio(),
             "capture" => run_capture(&flags).await,
             "library" => run_library(&flags),
+            "cleanup" => run_cleanup(),
             "help" | "-h" | "--help" => {
                 println!("{USAGE}");
                 Ok(())
@@ -472,6 +480,78 @@ fn run_library(flags: &Flags) -> Result<(), String> {
         facets.queues.len(),
         started.elapsed().as_secs_f64() * 1000.0
     );
+    Ok(())
+}
+
+/// The cleanup's dry run: nothing is recycled or written.
+fn run_cleanup() -> Result<(), String> {
+    let paths = AppPaths::resolve();
+    let settings = load_settings(&paths);
+    let storage = &settings.storage;
+    let library = Library::new(
+        paths.matches_dir.clone(),
+        paths.recordings_dir.clone(),
+        settings.tracker_config().session,
+    );
+    let now_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or_default();
+    let started = Instant::now();
+    let overview = library.cleanup_overview(&storage.janitor_rules(), now_ms);
+    let elapsed = started.elapsed();
+    let plan = &overview.plan;
+    println!("library {}", paths.matches_dir.display());
+    println!(
+        "cleanup is {}: keep {} days, at most {} GB of full matches (0: no limit)",
+        if storage.cleanup { "on" } else { "off" },
+        storage.keep_days,
+        storage.full_matches_gb
+    );
+    println!(
+        "full matches {} in {} ({} favorites); imported, left alone, {} in {}; clips {}{}",
+        disk::gb(plan.managed_bytes),
+        plan.managed_matches,
+        plan.favorites,
+        disk::gb(plan.unmanaged_bytes),
+        plan.unmanaged_matches,
+        disk::gb(plan.clip_bytes),
+        if plan.clips_over_warning {
+            " (over the warning level)"
+        } else {
+            ""
+        }
+    );
+    println!(
+        "dry run in {:.0} ms: {} videos to the Recycle Bin, {} freed, {} left",
+        elapsed.as_secs_f64() * 1000.0,
+        plan.removals.len(),
+        disk::gb(plan.freed_bytes),
+        disk::gb(plan.bytes_after)
+    );
+    // A match's id is its start (UTC), queue and champion.
+    for removal in &plan.removals {
+        println!(
+            "  {:<48} {:>9}  {:?}",
+            removal.id,
+            disk::gb(removal.bytes),
+            removal.reason
+        );
+    }
+    if overview.thumbnails + overview.folders > 0 {
+        println!(
+            "also {} clip thumbnails without their clip and {} empty match folders",
+            overview.thumbnails, overview.folders
+        );
+    }
+    for kept in &overview.kept {
+        println!(
+            "  kept (couldn't recycle): {} {}  {}",
+            kept.removal.id,
+            disk::gb(kept.removal.bytes),
+            kept.why
+        );
+    }
     Ok(())
 }
 

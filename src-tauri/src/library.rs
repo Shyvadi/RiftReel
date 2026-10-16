@@ -9,9 +9,11 @@
 //! saved. Clips are added to it later, from the review (`plan_clip`, `add_clip`).
 //!
 //! The list comes from an index of the folders (`index`, `library.db` in the library's
-//! root): the sidecars are the truth, the index a cache kept in step with them.
+//! root): the sidecars are the truth, the index a cache kept in step with them. The
+//! cleanup (`janitor`) keeps the full-match videos within the user's limits.
 
 mod index;
+pub mod janitor;
 
 use std::collections::HashSet;
 use std::io;
@@ -42,6 +44,8 @@ pub const MATCH_THUMBNAIL: &str = "thumbs/match.jpg";
 const MATCH_THUMBNAIL_NAME: &str = "match.jpg";
 /// The index, in the library's root (beside the matches folder).
 pub const INDEX_FILE: &str = "library.db";
+/// `source` in the `match.json` of a match imported from Outplayed.
+pub const OUTPLAYED_SOURCE: &str = "outplayed";
 
 /// Recordings are addressed as `recording:<file stem>`.
 const RECORDING_PREFIX: &str = "recording:";
@@ -594,6 +598,28 @@ impl Library {
         write_json(&path, &summary)?;
         self.refresh(id);
         Ok(true)
+    }
+
+    /// Marks a saved match as a favorite (or not) in its `match.json`: the cleanup never
+    /// removes a favorite's video.
+    pub fn set_match_favorite(&self, id: &str, favorite: bool) -> io::Result<()> {
+        let not_found = || io::Error::new(io::ErrorKind::NotFound, "match not found");
+        let dir = self.matches_dir.join(safe_name(id).ok_or_else(not_found)?);
+        let path = dir.join(MATCH_FILE);
+        let mut summary = read_json(&path).ok_or_else(not_found)?;
+        summary
+            .as_object_mut()
+            .ok_or_else(not_found)?
+            .insert("favorite".into(), favorite.into());
+        write_json(&path, &summary)?;
+        self.refresh(id);
+        Ok(())
+    }
+
+    /// A saved match's video, if it has one (for "show in Explorer").
+    pub fn video_file(&self, id: &str) -> Option<PathBuf> {
+        let dir = self.matches_dir.join(safe_name(id)?);
+        video_path(&dir, &read_json(&dir.join(MATCH_FILE))?)
     }
 
     fn replay_recording(&self, path: &Path) -> Option<Value> {

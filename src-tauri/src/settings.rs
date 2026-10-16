@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use crate::capture::audio::{SourceConfig, SourceKind};
 use crate::capture::probe::CANDIDATES;
 use crate::capture::CaptureConfig;
+use crate::library::janitor::Rules;
 use crate::tracker::moments::DEFAULT_MAX_MOMENT_S;
 use crate::tracker::normalize::{MarkerConfig, MarkerKind, MarkerWindow};
 use crate::tracker::runtime::TrackerConfig;
@@ -34,6 +35,9 @@ const HEADER: &str = "\
 #   volumes run 0.0 to 4.0. `downplayed-dev audio` lists the devices.
 # [storage]: min_free_gb: no recording starts with less free space than this on the
 #   library's drive; stop_free_gb: a recording stops (keeping what it has) below this.
+#   cleanup = true sends full-match videos older than keep_days, then the oldest while
+#   they take more than full_matches_gb, to the Recycle Bin (0 = no limit). Clips and
+#   favorites are never removed; clips_warn_gb only warns.
 # [markers.<type>]: pre_s / post_s are seconds kept before / after the event.
 ";
 
@@ -247,6 +251,14 @@ pub struct StorageSettings {
     pub min_free_gb: f64,
     /// A recording stops, keeping what it has, when free space falls below this (GB).
     pub stop_free_gb: f64,
+    /// The cleanup: off until the user turns it on.
+    pub cleanup: bool,
+    /// Full-match videos older than this many days go to the Recycle Bin (0: no limit).
+    pub keep_days: u32,
+    /// Then the oldest go while full-match videos take more than this (GB; 0: no limit).
+    pub full_matches_gb: f64,
+    /// Clips are never removed; above this (GB) the window warns (0: never).
+    pub clips_warn_gb: f64,
 }
 
 impl Default for StorageSettings {
@@ -254,12 +266,25 @@ impl Default for StorageSettings {
         Self {
             min_free_gb: 20.0,
             stop_free_gb: 2.0,
+            cleanup: false,
+            keep_days: 30,
+            full_matches_gb: 150.0,
+            clips_warn_gb: 50.0,
         }
     }
 }
 
 impl StorageSettings {
-    fn validate(&mut self) -> Vec<String> {
+    /// The cleanup's limits.
+    pub fn janitor_rules(&self) -> Rules {
+        Rules {
+            keep_days: self.keep_days,
+            max_full_bytes: crate::disk::bytes_of_gb(self.full_matches_gb),
+            clips_warn_bytes: crate::disk::bytes_of_gb(self.clips_warn_gb),
+        }
+    }
+
+    pub fn validate(&mut self) -> Vec<String> {
         let mut warnings = Vec::new();
         let defaults = Self::default();
         for (name, value, default) in [
@@ -268,6 +293,16 @@ impl StorageSettings {
                 "stop_free_gb",
                 &mut self.stop_free_gb,
                 defaults.stop_free_gb,
+            ),
+            (
+                "full_matches_gb",
+                &mut self.full_matches_gb,
+                defaults.full_matches_gb,
+            ),
+            (
+                "clips_warn_gb",
+                &mut self.clips_warn_gb,
+                defaults.clips_warn_gb,
             ),
         ] {
             if !(value.is_finite() && *value >= 0.0) {
@@ -806,6 +841,36 @@ mod tests {
         let mut bad = Settings::from_toml("[storage]\nmin_free_gb = -3\n").unwrap();
         assert_eq!(bad.validate().len(), 1);
         assert_eq!(bad.storage.min_free_gb, 20.0);
+    }
+
+    #[test]
+    fn the_cleanup_is_off_until_turned_on() {
+        let defaults = Settings::default().storage;
+        assert!(!defaults.cleanup);
+        assert_eq!(
+            defaults.janitor_rules(),
+            Rules {
+                keep_days: 30,
+                max_full_bytes: 150_000_000_000,
+                clips_warn_bytes: 50_000_000_000,
+            }
+        );
+        assert!(Settings::default().to_toml().contains("cleanup = false"));
+
+        let mut settings = Settings::from_toml(
+            "[storage]\ncleanup = true\nkeep_days = 0\nfull_matches_gb = 80.5\nclips_warn_gb = -1\n",
+        )
+        .unwrap();
+        assert_eq!(settings.validate().len(), 1, "a negative warning level");
+        assert!(settings.storage.cleanup);
+        assert_eq!(
+            settings.storage.janitor_rules(),
+            Rules {
+                keep_days: 0,
+                max_full_bytes: 80_500_000_000,
+                clips_warn_bytes: 50_000_000_000,
+            }
+        );
     }
 
     #[test]

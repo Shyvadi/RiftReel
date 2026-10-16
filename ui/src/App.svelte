@@ -5,12 +5,19 @@
   import StatusPanel from './StatusPanel.svelte';
   import MatchList from './MatchList.svelte';
   import MatchView from './MatchView.svelte';
+  import StorageView from './StorageView.svelte';
   import { clock, words } from './lib/format.js';
 
   let app = $state(null);
   let error = $state('');
-  /** The match under review, or null for the overview. */
+  /** The match under review, or null for the page below. */
   let openId = $state(null);
+  /** 'matches' (the overview) or 'storage'. */
+  let page = $state('matches');
+  const go = (next) => {
+    openId = null;
+    page = next;
+  };
   /** Messages for the user (low disk), shown until dismissed. */
   let notices = $state([]);
   const addNotice = (text) => {
@@ -39,6 +46,10 @@
   <header>
     <h1>Downplayed</h1>
     {#if app}<span class="muted">v{app.version}</span>{/if}
+    <nav class="pages" aria-label="Pages">
+      <button type="button" class:active={page === 'matches' && !openId} onclick={() => go('matches')}>Matches</button>
+      <button type="button" class:active={page === 'storage' && !openId} onclick={() => go('storage')}>Storage</button>
+    </nav>
   </header>
 
   {#if error}
@@ -56,10 +67,15 @@
   {#if openId}
     <MatchView id={openId} onBack={() => (openId = null)} />
   {/if}
+  {#if app && page === 'storage'}
+    <div hidden={!!openId}>
+      <StorageView onBack={() => go('matches')} onOpen={(id) => (openId = id)} />
+    </div>
+  {/if}
   {#if app}
     {@const tracker = app.tracker}
     <!-- Kept while a review is open, so the list keeps its place. -->
-    <div hidden={!!openId}>
+    <div hidden={!!openId || page !== 'matches'}>
     <StatusPanel {tracker} />
 
     {#if tracker.current?.tracking}
@@ -171,6 +187,29 @@
     margin: 0;
     font-size: 22px;
     letter-spacing: 0.2px;
+  }
+  .pages {
+    margin-left: auto;
+    display: flex;
+    gap: 4px;
+  }
+  .pages button {
+    border: 1px solid transparent;
+    background: none;
+    color: var(--muted);
+    border-radius: 999px;
+    padding: 4px 12px;
+    font: inherit;
+    cursor: pointer;
+  }
+  .pages button:hover {
+    color: var(--text);
+  }
+  .pages button.active {
+    border-color: var(--line);
+    background: var(--card);
+    color: var(--text);
+    font-weight: 600;
   }
   .error {
     color: var(--lose);

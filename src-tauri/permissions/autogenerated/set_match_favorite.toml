@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-set-match-favorite"
+description = "Enables the set_match_favorite command without any pre-configured scope."
+commands.allow = ["set_match_favorite"]
+
+[[permission]]
+identifier = "deny-set-match-favorite"
+description = "Denies the set_match_favorite command without any pre-configured scope."
+commands.deny = ["set_match_favorite"]

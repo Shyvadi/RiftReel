@@ -26,6 +26,8 @@
   /** A clip waiting for its second "Recycle" click, and the last action's message. */
   let confirming = $state(null);
   let clipNotice = $state('');
+  /** Why the last ★ on the match didn't take. */
+  let favoriteError = $state('');
 
   $effect(() => {
     const wanted = id;
@@ -42,6 +44,7 @@
     saveError = null;
     confirming = null;
     clipNotice = '';
+    favoriteError = '';
     invoke('get_match', { id: wanted })
       .then((value) => {
         if (wanted === id) match = value;
@@ -181,6 +184,18 @@
     else markOut = at;
   }
 
+  /** A favorite match keeps its full video: the cleanup never removes it. */
+  async function toggleMatchFavorite() {
+    const favorite = !match.favorite;
+    favoriteError = '';
+    try {
+      await invoke('set_match_favorite', { id, favorite });
+      match.favorite = favorite;
+    } catch (e) {
+      favoriteError = String(e);
+    }
+  }
+
   async function toggleFavorite(c) {
     const favorite = !c.favorite;
     clipError = '';
@@ -287,7 +302,22 @@
 {:else}
   <header class="card head">
     <div class="who">
-      <h2>{match.champion ?? 'Unknown champion'}</h2>
+      <h2>
+        {match.champion ?? 'Unknown champion'}
+        {#if match.source === 'game'}
+          <button
+            type="button"
+            class="icon star"
+            class:on={match.favorite}
+            aria-pressed={!!match.favorite}
+            title={match.favorite
+              ? 'Favorite: the cleanup never removes this match'
+              : 'Mark as favorite: the cleanup never removes favorites'}
+            onclick={toggleMatchFavorite}>{match.favorite ? '★' : '☆'}</button
+          >
+        {/if}
+      </h2>
+      {#if favoriteError}<div class="error small">{favoriteError}</div>{/if}
       <div class="muted">
         {match.queue ?? match.gameMode ?? ''}
         {#if match.source === 'recording'}· recording{/if}
@@ -640,6 +670,10 @@
     <p class="muted small">
       {#if match.source === 'recording'}
         Fixture recordings have no video.
+      {:else if match.videoRemoved}
+        The cleanup sent this match's full recording to the Recycle Bin on {when(match.videoRemoved.atMs)}
+        ({match.videoRemoved.reason === 'age' ? 'older than the days kept' : 'over the size limit'}).
+        {#if clips.length}The clips saved from it are kept.{/if}
       {:else if clips.length}
         This match's recording is gone; the clips saved from it are kept.
       {:else if match.recording}
@@ -864,6 +898,10 @@
   }
   .icon.on {
     color: var(--warn);
+  }
+  .star {
+    font-size: 20px;
+    vertical-align: 2px;
   }
   .icon:disabled {
     opacity: 0.4;

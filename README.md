@@ -20,7 +20,9 @@ markers that seeks it, and clips. ✂ saves a highlight as a clip, or mark in an
 the player to save any part; each is a stream copy out of the recording, listed with a
 thumbnail, and can be played, made a favorite, shown in Explorer, copied to the
 clipboard as a file, saved as a copy, or sent to the Recycle Bin. After each game the
-window opens on that game's review, once the game has closed.
+window opens on that game's review, once the game has closed. Storage shows what the
+library takes and, once turned on, the cleanup keeps the full-match videos within an age
+and a size by sending the oldest to the Recycle Bin; it shows a dry run first.
 
 | Doc | What it covers |
 |---|---|
@@ -80,8 +82,9 @@ and `downplayed-dev eog` prints what Downplayed reads from the end-of-game stats
 `downplayed-dev probe` runs the encoder probe (NVENC → AMF → QSV → CPU) and lists the
 monitors, `downplayed-dev audio` lists the sound devices, `downplayed-dev capture 30`
 records 30 seconds the way a match is recorded and prints the frame, dropped-frame and
-duplicated-frame counts and how the audio went, and `downplayed-dev library [--cold]`
-times the library index (rebuilt from scratch with `--cold`) and a few list queries.
+duplicated-frame counts and how the audio went, `downplayed-dev library [--cold]`
+times the library index (rebuilt from scratch with `--cold`) and a few list queries, and
+`downplayed-dev cleanup` prints the cleanup's dry run.
 
 > **This machine:** Visual Studio 2022 Community has a partial MSVC 14.42 toolset (no
 > headers). `cc-rs` picks it first, so building `ring` fails with "Cannot open include
@@ -97,6 +100,7 @@ times the library index (rebuilt from scratch with `--cold`) and a few list quer
 | Logs | `%LOCALAPPDATA%\Downplayed\logs\downplayed.log`, 5 × 5 MB rotation, Riot identifiers scrubbed |
 | Matches | `%LOCALAPPDATA%\Downplayed\library\League of Legends\<date>_<time>_<queue>_<champion>\` (UTC), one folder per tracked match: `match.json`, `match.mp4` when it was recorded, the clips made from it in `clips\` with their thumbnails in `thumbs\`, and its list thumbnail `thumbs\match.jpg` |
 | Library index | `%LOCALAPPDATA%\Downplayed\library\library.db`: a cache of the match folders' `match.json` files, rebuilt from them if it is lost or damaged |
+| Cleanup notes | `%LOCALAPPDATA%\Downplayed\library\cleanup.json`: videos the cleanup couldn't recycle, and its last run |
 | Encoder probe | `%LOCALAPPDATA%\Downplayed\capture-probe.json`: which encoder works here, probed once per ffmpeg binary |
 | Recordings | `%LOCALAPPDATA%\Downplayed\recordings`, where `downplayed-dev record` saves by default |
 | `DOWNPLAYED_HOME` | Put settings, logs, matches and recordings under one folder instead (development) |
@@ -119,6 +123,14 @@ free (20), and one stops cleanly, keeping its file, below `stop_free_gb` (2). Ei
 said once, after the game: in the window if it is open, else as a Windows notification.
 Nothing is ever shown during a game.
 
+The cleanup is off until turned on (`cleanup`, or the Storage view). Then, after each
+match and every hour, never during a game, full-match videos older than `keep_days` (30)
+go to the Recycle Bin, then the oldest while full matches take more than
+`full_matches_gb` (150). Clips are never removed (the window warns above
+`clips_warn_gb`, 50), nor are favorites (★ in a match's review) or imported videos. A
+video too big for the Recycle Bin is never deleted: it stays, flagged in Storage.
+`downplayed-dev cleanup` prints what the cleanup would do now.
+
 ## Layout
 
 ```
@@ -133,10 +145,11 @@ src-tauri/src/
   capture/                   ffmpeg sidecar (ddagrab + NVENC/AMF/QSV), encoder probe, monitor
                              lookup (DXGI), WASAPI audio on QPC time, clip cutting, the
                              controller that records each match
-  library.rs, library/       match folders (match.json, match.mp4, clips) and their SQLite
-                             index (index.rs)
+  library.rs, library/       match folders (match.json, match.mp4, clips), their SQLite
+                             index (index.rs) and the cleanup (janitor.rs)
   thumbnails.rs              list thumbnails, made in the background (never in game)
-  shell.rs                   Recycle Bin, clipboard, Save as, Explorer
+  shell.rs                   Recycle Bin (never deleting outright), clipboard, Save as,
+                             Explorer
   replay.rs, bin/            fixture replay and the downplayed-dev tool
 src-tauri/tests/             fake HTTPS Live Client API + fake LCU, end-to-end runtime tests
 fixtures/lol/                synthetic Live Client / LCU fixtures and expected replay output

@@ -41,6 +41,14 @@ export function kda(value) {
   return `${value.kills} / ${value.deaths} / ${value.assists}`;
 }
 
+/** Bytes as `12.3 GB`, `456 MB` (decimal units, as the settings count them). */
+export function size(bytes) {
+  if (bytes == null) return '–';
+  if (bytes >= 1e9) return `${(bytes / 1e9).toFixed(1)} GB`;
+  if (bytes >= 1e6) return `${Math.round(bytes / 1e6)} MB`;
+  return `${Math.max(0, Math.round(bytes / 1e3))} KB`;
+}
+
 export function when(ms) {
   if (!ms) return '';
   return new Date(ms).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
