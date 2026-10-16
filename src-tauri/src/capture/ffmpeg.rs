@@ -18,6 +18,7 @@ use tokio::process::{Child, Command};
 use tokio::sync::{mpsc, oneshot};
 
 use super::audio::{AudioInput, RATE};
+use super::clips::{self, ClipPlan};
 
 /// Tauri's sidecar file name. `tools/fetch-ffmpeg.ps1` installs it in
 /// `src-tauri/binaries`; the installer puts it next to Downplayed as `ffmpeg.exe`.
@@ -643,6 +644,51 @@ pub async fn remux_to_mp4(
         let _ = tokio::fs::remove_file(&temp).await;
     }
     result
+}
+
+/// Cuts one clip and its thumbnail into `folder` (see `clips`). Returns whether the
+/// thumbnail was made; a clip without one still counts.
+pub async fn cut_clip(
+    ffmpeg: &Path,
+    video: &Path,
+    folder: &Path,
+    plan: &ClipPlan,
+) -> Result<bool, String> {
+    let clip = folder.join(&plan.file);
+    let thumbnail = folder.join(&plan.thumbnail);
+    for dir in [clip.parent(), thumbnail.parent()].into_iter().flatten() {
+        tokio::fs::create_dir_all(dir)
+            .await
+            .map_err(|e| e.to_string())?;
+    }
+    let cut = clips::cut_args(video, plan.from_s, plan.to_s, &clip);
+    let (exit, _) = run_to_end(
+        ffmpeg,
+        &cut,
+        Priority::BelowNormal,
+        Duration::from_secs(120),
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+    if !exit.success {
+        let _ = tokio::fs::remove_file(&clip).await;
+        return Err(exit.detail.unwrap_or_else(|| "ffmpeg failed".into()));
+    }
+    let frame = clips::thumbnail_args(video, plan.thumbnail_at_s, &thumbnail);
+    match run_to_end(
+        ffmpeg,
+        &frame,
+        Priority::BelowNormal,
+        Duration::from_secs(30),
+    )
+    .await
+    {
+        Ok((exit, _)) if exit.success => Ok(true),
+        _ => {
+            let _ = tokio::fs::remove_file(&thumbnail).await;
+            Ok(false)
+        }
+    }
 }
 
 async fn replace(temp: &Path, file: &Path) -> Result<(), String> {

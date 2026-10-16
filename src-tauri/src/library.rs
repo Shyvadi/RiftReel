@@ -15,6 +15,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use serde::Serialize;
 use serde_json::Value;
 
+use crate::capture::clips::{CLIPS_DIR, THUMBS_DIR};
 use crate::recorder::utc_parts;
 use crate::replay::{replay_with, Fixture, LcuRecording};
 use crate::tracker::session::{MatchSummary, SessionConfig};
@@ -181,7 +182,54 @@ impl Library {
         if let Some(video) = video {
             object.insert("videoPath".into(), video.display().to_string().into());
         }
+        // Clips and thumbnails that are there, with their full paths for the player.
+        if let Some(clips) = object.get_mut("clips").and_then(Value::as_array_mut) {
+            for clip in clips.iter_mut().filter_map(Value::as_object_mut) {
+                let file = clip.get("file").and_then(Value::as_str);
+                if let Some(path) = file.and_then(|f| member_file(&dir, CLIPS_DIR, f)) {
+                    clip.insert("path".into(), path.display().to_string().into());
+                }
+                let thumbnail = clip.get("thumbnail").and_then(Value::as_str);
+                if let Some(path) = thumbnail.and_then(|f| member_file(&dir, THUMBS_DIR, f)) {
+                    clip.insert("thumbnailPath".into(), path.display().to_string().into());
+                }
+            }
+        }
         Some(summary)
+    }
+
+    /// A saved match's clip file, if the match lists it and it exists (for "show in
+    /// Explorer").
+    pub fn clip_file(&self, id: &str, file: &str) -> Option<PathBuf> {
+        let dir = self.matches_dir.join(safe_name(id)?);
+        let summary = read_json(&dir.join(MATCH_FILE))?;
+        let listed = summary["clips"]
+            .as_array()?
+            .iter()
+            .any(|clip| clip["file"].as_str() == Some(file));
+        listed.then(|| member_file(&dir, CLIPS_DIR, file)).flatten()
+    }
+
+    /// Marks a clip as a favorite (or not) in its match's `match.json`. Returns `false`
+    /// when the match doesn't list the clip.
+    pub fn set_clip_favorite(&self, id: &str, file: &str, favorite: bool) -> io::Result<bool> {
+        let not_found = || io::Error::new(io::ErrorKind::NotFound, "match not found");
+        let dir = self.matches_dir.join(safe_name(id).ok_or_else(not_found)?);
+        let path = dir.join(MATCH_FILE);
+        let mut summary = read_json(&path).ok_or_else(not_found)?;
+        let Some(clip) = summary["clips"].as_array_mut().and_then(|clips| {
+            clips
+                .iter_mut()
+                .find(|clip| clip["file"].as_str() == Some(file))
+        }) else {
+            return Ok(false);
+        };
+        clip["favorite"] = favorite.into();
+        let text = serde_json::to_string_pretty(&summary).map_err(io::Error::other)?;
+        let temp = path.with_extension("json.tmp");
+        std::fs::write(&temp, text + "\n")?;
+        std::fs::rename(&temp, &path)?;
+        Ok(true)
     }
 
     fn replay_recording(&self, path: &Path) -> Option<Value> {
@@ -209,6 +257,13 @@ fn card(id: String, source: Source, when_ms: u64, summary: &Value) -> MatchCard 
         moments: summary["moments"].as_array().map_or(0, Vec::len),
         video: false,
     }
+}
+
+/// `<folder>/<name>` inside a match folder, if `relative` is exactly that (one plain
+/// name under `folder`: never a path out of it) and the file exists.
+fn member_file(dir: &Path, folder: &str, relative: &str) -> Option<PathBuf> {
+    let name = safe_name(relative.strip_prefix(folder)?.strip_prefix('/')?)?;
+    Some(dir.join(folder).join(name)).filter(|path| path.is_file())
 }
 
 /// The match's video, if `match.json` names one (a plain file name: never a path out of
@@ -493,6 +548,53 @@ mod tests {
             assert_eq!(review.get("videoPath").is_some(), plays, "{file}");
             assert_eq!(library.list()[0].video, plays, "{file}");
         }
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn clips_are_listed_with_their_files_and_can_be_favourited() {
+        let root = temp_dir("clips");
+        let matches = root.join("matches");
+        let dir = matches.join("m1");
+        std::fs::create_dir_all(dir.join(CLIPS_DIR)).unwrap();
+        std::fs::create_dir_all(dir.join(THUMBS_DIR)).unwrap();
+        std::fs::create_dir_all(root.join("secret")).unwrap();
+        std::fs::write(root.join("secret").join("x.mp4"), b"").unwrap();
+        std::fs::write(dir.join(CLIPS_DIR).join("0001_kill.mp4"), b"").unwrap();
+        std::fs::write(dir.join(THUMBS_DIR).join("0001.jpg"), b"").unwrap();
+        let json = serde_json::json!({ "clips": [
+            { "file": "clips/0001_kill.mp4", "fromS": 88, "toS": 108, "label": "kill", "thumbnail": "thumbs/0001.jpg" },
+            { "file": "clips/../../secret/x.mp4", "fromS": 0, "toS": 1, "label": "x" },
+            { "file": "clips/0002_missing.mp4", "fromS": 0, "toS": 1, "label": "y" }
+        ]});
+        std::fs::write(dir.join(MATCH_FILE), json.to_string()).unwrap();
+        let library = Library::new(matches, root.join("recordings"), SessionConfig::default());
+
+        let review = library.get("m1").unwrap();
+        let clips = review["clips"].as_array().unwrap();
+        let clip = dir.join(CLIPS_DIR).join("0001_kill.mp4");
+        assert_eq!(clips[0]["path"], clip.display().to_string());
+        assert_eq!(
+            clips[0]["thumbnailPath"],
+            dir.join(THUMBS_DIR).join("0001.jpg").display().to_string()
+        );
+        assert!(clips[1].get("path").is_none(), "never outside clips/");
+        assert!(clips[2].get("path").is_none(), "the file is missing");
+
+        assert!(library
+            .set_clip_favorite("m1", "clips/0001_kill.mp4", true)
+            .unwrap());
+        assert_eq!(library.get("m1").unwrap()["clips"][0]["favorite"], true);
+        assert!(!library
+            .set_clip_favorite("m1", "clips/none.mp4", true)
+            .unwrap());
+        assert!(library
+            .set_clip_favorite("../m1", "clips/0001_kill.mp4", true)
+            .is_err());
+
+        assert_eq!(library.clip_file("m1", "clips/0001_kill.mp4"), Some(clip));
+        assert_eq!(library.clip_file("m1", "clips/../../secret/x.mp4"), None);
+        assert_eq!(library.clip_file("m1", "clips/unlisted.mp4"), None);
         std::fs::remove_dir_all(&root).ok();
     }
 

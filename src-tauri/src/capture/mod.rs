@@ -13,9 +13,11 @@
 //! - [`display`]: the DXGI adapter and output of League's monitor
 //! - [`audio`]: sources, the QPC timeline that keeps them locked to the video, the pipes
 //! - [`wasapi`]: the capture threads (loopback, microphone, League's process loopback)
+//! - [`clips`]: each moment cut from the video (stream copy) with a thumbnail
 //! - [`controller`]: start with the match, stop at its end, hand back the recording
 
 pub mod audio;
+pub mod clips;
 pub mod controller;
 pub mod display;
 pub mod ffmpeg;

@@ -17,6 +17,8 @@ export function category(label) {
   switch (label) {
     case 'victory':
       return 'win';
+    case 'replay':
+      return 'replay';
     case 'death':
       return 'death';
     case 'assist':

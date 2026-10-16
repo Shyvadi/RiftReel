@@ -11,6 +11,11 @@
   /** Its position, for the timeline's playhead. */
   let videoTime = $state(0);
   let videoError = $state('');
+  /** The clip in the player, or null for the whole match. */
+  let clip = $state(null);
+  /** Where to start once the player has loaded the file `show` put in it. */
+  let pendingStart = null;
+  let clipError = $state('');
 
   $effect(() => {
     const wanted = id;
@@ -18,6 +23,9 @@
     error = '';
     videoError = '';
     videoTime = 0;
+    clip = null;
+    pendingStart = null;
+    clipError = '';
     invoke('get_match', { id: wanted })
       .then((value) => {
         if (wanted === id) match = value;
@@ -36,8 +44,16 @@
     game_end_event: "from Riot's GameEnd event",
   };
 
-  // The asset protocol streams the file in ranged reads; it is never loaded whole.
+  // The asset protocol streams files in ranged reads; they are never loaded whole.
   const videoSrc = $derived(match?.videoPath ? convertFileSrc(match.videoPath) : null);
+  const clips = $derived(match?.clips ?? []);
+  /** The clip that has recording time `seconds` (clips are cut from the recording, so
+   *  they share its timeline from their start). */
+  const clipAt = (seconds) => clips.find((c) => c.path && c.fromS <= seconds && seconds < c.toS) ?? null;
+  /** Without the whole match (highlights mode), the player starts on the first clip. */
+  const shown = $derived(clip ?? (videoSrc ? null : (clips.find((c) => c.path) ?? null)));
+  const playerSrc = $derived(shown ? convertFileSrc(shown.path) : videoSrc);
+  const shownIndex = $derived(shown ? clips.findIndex((c) => c.file === shown.file) : -1);
   const markersById = $derived(new Map((match?.markers ?? []).map((m) => [m.id, m])));
   /** Game time at video time 0 (negative when recording began in the loading screen). */
   const offset = $derived.by(() => {
@@ -46,7 +62,11 @@
     const aligned = (match?.markers ?? []).find((m) => m.videoTimeS != null);
     return aligned ? aligned.gameTimeS - aligned.videoTimeS : null;
   });
-  const playhead = $derived(videoSrc && offset != null ? videoTime + offset : null);
+  const playhead = $derived(playerSrc && offset != null ? (shown?.fromS ?? 0) + videoTime + offset : null);
+  /** Recording time as game time, or as itself when the two can't be lined up. */
+  const gameClock = (seconds) => clock(offset != null ? seconds + offset : seconds);
+  /** Whether the player can show recording time `seconds`. */
+  const playable = (seconds) => seconds != null && (videoSrc != null || clipAt(Math.max(0, seconds)) != null);
 
   /** Where a marker's clip starts in the video: its pre-roll before the event. */
   const markerStart = (marker) => (marker.videoTimeS == null ? null : marker.videoTimeS - marker.preS);
@@ -60,16 +80,66 @@
     return starts.length ? Math.min(...starts) : null;
   }
 
+  /** Plays from recording time `seconds`: in the whole match, or in the clip that has
+   *  that time when only clips were kept. */
   function seek(seconds) {
-    if (!video || seconds == null) return;
-    video.currentTime = Math.max(0, seconds);
+    if (seconds == null) return;
+    const at = Math.max(0, seconds);
+    if (videoSrc) {
+      show(null, at);
+    } else {
+      const found = clipAt(at);
+      if (found) show(found, at - found.fromS);
+    }
+  }
+
+  /** Puts a clip, or the whole match for null, in the player and plays it from `at`. */
+  function show(next, at = 0) {
+    if ((next?.file ?? null) === (shown?.file ?? null)) {
+      if (video) {
+        video.currentTime = at;
+        video.play().catch(() => {});
+      }
+    } else {
+      // The new file plays once it has loaded (`started`).
+      clip = next;
+      videoError = '';
+      videoTime = at;
+      pendingStart = at;
+    }
+    video?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }
+
+  function started() {
+    if (pendingStart == null) return;
+    video.currentTime = pendingStart;
+    pendingStart = null;
     video.play().catch(() => {});
-    video.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }
+
+  async function toggleFavorite(c) {
+    const favorite = !c.favorite;
+    clipError = '';
+    try {
+      await invoke('set_clip_favorite', { id, file: c.file, favorite });
+      c.favorite = favorite;
+    } catch (e) {
+      clipError = String(e);
+    }
+  }
+
+  async function reveal(c) {
+    clipError = '';
+    try {
+      await invoke('reveal_clip', { id, file: c.file });
+    } catch (e) {
+      clipError = String(e);
+    }
   }
 
   /** A click on the timeline's background: play from that game time. */
   function seekTimeline(event) {
-    if (!video || offset == null) return;
+    if (!playerSrc || offset == null) return;
     const rect = event.currentTarget.getBoundingClientRect();
     const units = ((event.clientX - rect.left) / rect.width) * 1000;
     seek(((units - 8) / 984) * duration - offset);
@@ -126,24 +196,85 @@
     </div>
   </header>
 
-  {#if videoSrc}
+  {#if playerSrc}
     {@const recording = match.recording}
     <section class="card player">
+      {#if shown}
+        <div class="playing">
+          <span>
+            Clip {shownIndex + 1} · <span class="label">{words(shown.label)}</span>
+            <span class="muted">· {gameClock(shown.fromS)}–{gameClock(shown.toS)}</span>
+          </span>
+          {#if videoSrc}
+            <button type="button" class="back" onclick={() => show(null, shown.fromS + videoTime)}>Whole match</button>
+          {/if}
+        </div>
+      {/if}
       <!-- svelte-ignore a11y_media_has_caption -->
       <video
         bind:this={video}
-        src={videoSrc}
+        src={playerSrc}
         controls
         preload="metadata"
+        onloadedmetadata={started}
         ontimeupdate={() => (videoTime = video.currentTime)}
-        onerror={() => (videoError = 'This video could not be played.')}
+        onerror={() => (videoError = shown ? 'This clip could not be played.' : 'This video could not be played.')}
       ></video>
       {#if videoError}<p class="error">{videoError}</p>{/if}
-      <div class="muted small">
-        {recording.width}×{recording.height} · {recording.fps} fps · {recording.encoder}
-        {#if recording.droppedFrames}· {recording.droppedFrames} dropped frames{/if}
-        {#if recording.error}· the recording ended early ({recording.error}){/if}
-      </div>
+      {#if recording}
+        <div class="muted small">
+          {recording.width}×{recording.height} · {recording.fps} fps · {recording.encoder}
+          {#if recording.droppedFrames}· {recording.droppedFrames} dropped frames{/if}
+          {#if recording.error}· the recording ended early ({recording.error}){/if}
+        </div>
+      {/if}
+    </section>
+  {/if}
+
+  {#if clips.length}
+    <section class="card">
+      <h3>Clips <span class="muted">{clips.length}</span></h3>
+      {#if clipError}<p class="error small">{clipError}</p>{/if}
+      <ul class="clips">
+        {#each clips as c, i (c.file)}
+          <li class:current={shown?.file === c.file}>
+            <button
+              type="button"
+              class="thumb"
+              disabled={!c.path}
+              aria-label="Play clip {i + 1}, {words(c.label)}"
+              onclick={() => show(c)}
+            >
+              {#if c.thumbnailPath}
+                <img src={convertFileSrc(c.thumbnailPath)} alt="" loading="lazy" />
+              {:else}
+                <span class="nothumb">{c.path ? '▶' : 'missing'}</span>
+              {/if}
+              <span class="length">{Math.round(c.toS - c.fromS)} s</span>
+            </button>
+            <div class="clip-info">
+              <span class="name {category(c.label)}"><i></i><span class="label">{words(c.label)}</span></span>
+              <span class="muted num">{gameClock(c.fromS)}</span>
+              <button
+                type="button"
+                class="icon"
+                class:on={c.favorite}
+                aria-pressed={c.favorite}
+                title={c.favorite ? 'Favorite' : 'Mark as favorite'}
+                onclick={() => toggleFavorite(c)}>{c.favorite ? '★' : '☆'}</button
+              >
+              <button
+                type="button"
+                class="icon"
+                disabled={!c.path}
+                title="Show in Explorer"
+                aria-label="Show clip {i + 1} in Explorer"
+                onclick={() => reveal(c)}>📂</button
+              >
+            </div>
+          </li>
+        {/each}
+      </ul>
     </section>
   {/if}
 
@@ -165,7 +296,7 @@
       {/each}
       {#each match.moments as moment, i (i)}
         {@const start = momentStart(moment)}
-        {#if videoSrc && start != null}
+        {#if playable(start)}
           <rect
             class="band {category(moment.label)} live"
             x={x(moment.startS)}
@@ -195,7 +326,7 @@
       {/each}
       {#each match.markers as marker (marker.id)}
         {@const start = markerStart(marker)}
-        {#if videoSrc && start != null}
+        {#if playable(start)}
           <circle
             class="{category(marker.label)} live"
             cx={x(marker.gameTimeS)}
@@ -224,7 +355,11 @@
       <span class="assist"><i></i>assists</span>
       <span class="death"><i></i>deaths</span>
       <span class="win"><i></i>victory</span>
-      {#if videoSrc}<span>click a moment, a marker or anywhere on the timeline to watch it</span>{/if}
+      {#if videoSrc}
+        <span>click a moment, a marker or anywhere on the timeline to watch it</span>
+      {:else if playerSrc}
+        <span>click a moment or a marker to watch its clip</span>
+      {/if}
     </div>
   </section>
 
@@ -234,7 +369,7 @@
       <table>
         <thead>
           <tr>
-            {#if videoSrc}<th class="act"><span class="sr">play</span></th>{/if}
+            {#if playerSrc}<th class="act"><span class="sr">play</span></th>{/if}
             <th class="num">#</th><th>highlight</th><th class="num">from</th><th class="num">to</th><th class="num">length</th><th class="num">markers</th>
           </tr>
         </thead>
@@ -242,9 +377,9 @@
           {#each match.moments as moment, i (i)}
             {@const start = momentStart(moment)}
             <tr>
-              {#if videoSrc}
+              {#if playerSrc}
                 <td class="act">
-                  {#if start != null}
+                  {#if playable(start)}
                     <button type="button" class="play" aria-label="Play moment {i + 1}" onclick={() => seek(start)}>▶</button>
                   {/if}
                 </td>
@@ -271,7 +406,7 @@
         <table>
           <thead>
             <tr>
-              {#if videoSrc}<th class="act"><span class="sr">play</span></th>{/if}
+              {#if playerSrc}<th class="act"><span class="sr">play</span></th>{/if}
               <th class="num">time</th><th>marker</th><th>type</th><th class="num">window</th><th class="num">Riot events</th>
             </tr>
           </thead>
@@ -279,9 +414,9 @@
             {#each match.markers as marker (marker.id)}
               {@const start = markerStart(marker)}
               <tr>
-                {#if videoSrc}
+                {#if playerSrc}
                   <td class="act">
-                    {#if start != null}
+                    {#if playable(start)}
                       <button type="button" class="play" aria-label="Play {words(marker.label)} at {clock(marker.gameTimeS)}" onclick={() => seek(start)}>▶</button>
                     {/if}
                   </td>
@@ -306,6 +441,8 @@
     <p class="muted small">
       {#if match.source === 'recording'}
         Fixture recordings have no video.
+      {:else if clips.length}
+        Only this match's clips were kept, not the whole game.
       {:else if match.recording}
         This match was recorded, but its video file is no longer in the match folder.
       {:else}
@@ -382,6 +519,102 @@
     border-radius: 6px;
     margin-bottom: 6px;
   }
+  .playing {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 8px;
+  }
+  .clips {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 12px;
+  }
+  .clips li {
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  .clips li.current {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 1px var(--accent);
+  }
+  .thumb {
+    position: relative;
+    display: block;
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    padding: 0;
+    border: 0;
+    background: #000;
+    color: #fff;
+    cursor: pointer;
+  }
+  .thumb:disabled {
+    cursor: default;
+    opacity: 0.6;
+  }
+  .thumb img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+  .nothumb {
+    font-size: 13px;
+  }
+  .length {
+    position: absolute;
+    right: 6px;
+    bottom: 6px;
+    padding: 1px 6px;
+    border-radius: 4px;
+    background: rgba(0, 0, 0, 0.7);
+    color: #fff;
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+  }
+  .clip-info {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 8px;
+    font-size: 12px;
+  }
+  .clip-info .name {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .icon {
+    border: 0;
+    background: none;
+    color: var(--muted);
+    border-radius: 4px;
+    padding: 2px 4px;
+    font: inherit;
+    font-size: 15px;
+    line-height: 1;
+    cursor: pointer;
+  }
+  .icon:hover,
+  .icon:focus-visible {
+    background: var(--hover);
+    color: var(--text);
+  }
+  .icon.on {
+    color: var(--warn);
+  }
+  .icon:disabled {
+    opacity: 0.4;
+    cursor: default;
+  }
   h3 {
     margin: 0 0 10px;
     font-size: 14px;
@@ -441,6 +674,10 @@
   .win {
     fill: var(--win);
     color: var(--win);
+  }
+  .replay {
+    fill: var(--muted);
+    color: var(--muted);
   }
   .legend {
     display: flex;

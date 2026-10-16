@@ -477,12 +477,23 @@ impl TrackerRuntime {
                 if let Some(recording) = recording {
                     session.set_recording(recording);
                 }
-                let summary = session.summary(reason);
+                let mut summary = session.summary(reason);
+                // Each moment as a clip, cut from the finished video.
+                let clips = match (&self.capture, &summary.recording) {
+                    (Some(capture), Some(recording)) => {
+                        capture
+                            .cut_clips(recording, &summary.moments, &summary.markers)
+                            .await
+                    }
+                    _ => Vec::new(),
+                };
+                summary.clips = clips;
                 tracing::info!(
                     result = ?summary.result,
                     source = ?summary.result_source,
                     markers = summary.markers.len(),
                     moments = summary.moments.len(),
+                    clips = summary.clips.len(),
                     ended = ?reason,
                     "match finished"
                 );

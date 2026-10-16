@@ -92,6 +92,59 @@ async fn get_match(
         .ok_or_else(|| "match not found".to_owned())
 }
 
+/// Marks a clip of a saved match as a favorite, or not.
+#[tauri::command]
+async fn set_clip_favorite(
+    id: String,
+    file: String,
+    favorite: bool,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    let library = state.library.clone();
+    let changed = tauri::async_runtime::spawn_blocking(move || {
+        library.set_clip_favorite(&id, &file, favorite)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())?;
+    changed
+        .then_some(())
+        .ok_or_else(|| "clip not found".to_owned())
+}
+
+/// Opens Explorer on a clip of a saved match, selected.
+#[tauri::command]
+async fn reveal_clip(
+    id: String,
+    file: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    let library = state.library.clone();
+    let path = tauri::async_runtime::spawn_blocking(move || library.clip_file(&id, &file))
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "clip not found".to_owned())?;
+    reveal_in_explorer(&path)
+}
+
+fn reveal_in_explorer(path: &std::path::Path) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        // Explorer takes `/select,"<path>"` as written; a path can't contain a quote.
+        std::process::Command::new("explorer.exe")
+            .raw_arg(format!("/select,\"{}\"", path.display()))
+            .spawn()
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = path;
+        Err("showing files is only supported on Windows".into())
+    }
+}
+
 pub fn run() {
     let paths = AppPaths::resolve();
     let loaded = Settings::load_or_create(&paths.settings_file);
@@ -135,7 +188,9 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_status,
             list_matches,
-            get_match
+            get_match,
+            set_clip_favorite,
+            reveal_clip
         ])
         .setup(move |app| {
             // The review's <video> streams match.mp4 from here, in ranged reads; the
