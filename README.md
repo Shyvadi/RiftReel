@@ -5,13 +5,16 @@ clean-room alternative to Overwolf's Outplayed, with no ads, no telemetry and no
 Overwolf runtime.
 
 Status: **phases 0 and 1 of the [blueprint](docs/03-downplayed-blueprint.md#12-roadmap)**,
-plus the first piece of phase 3's match view. The tray app, settings, scrubbed logging,
-Riot's local API clients and the highlight tracker work. The window shows whether the
-League client is detected and the tracker is ready, lists every tracked match (saved as
-`match.json`) and every recording, and reviews one: result, K/D/A, a timeline of
-moments and markers. After each game it opens on that game's review, once the game has
-closed. Video capture (phase 2) and clips (phase 3) don't exist yet; the tracker's
-capture step is a logged no-op.
+the first milestone of phase 2 (full-match video capture, no audio yet) and the first
+piece of phase 3's match view. The tray app, settings, scrubbed logging, Riot's local
+API clients and the highlight tracker work. Each tracked match is recorded to
+`match.mp4` beside its `match.json`: an ffmpeg sidecar captures the monitor League runs
+on with Desktop Duplication (`ddagrab`, nothing injected into the game) and the GPU's
+encoder, straight to disk. The window shows whether the League client is detected, the
+tracker is ready and the recorder is running, lists every tracked match and every
+fixture recording, and reviews one: result, K/D/A, the video, and a timeline of moments
+and markers that seeks the video. After each game it opens on that game's review, once
+the game has closed. Audio, the highlights ring buffer and clip export come next.
 
 | Doc | What it covers |
 |---|---|
@@ -27,6 +30,22 @@ Prerequisites: Rust (the pinned 1.90.0 toolchain installs itself through
 
 ```bash
 npm --prefix ui install
+```
+
+Capture needs an ffmpeg with `ddagrab` (the common 5.1 "essentials" build has none). This
+downloads the pinned LGPL build, checks its SHA-256 and installs it with its license in
+`src-tauri/binaries/` (not committed):
+
+```bash
+powershell -ExecutionPolicy Bypass -File tools/fetch-ffmpeg.ps1
+```
+
+Debug builds run it from there. A release build ships it next to `downplayed.exe`, with its
+license, through the bundle overlay (kept out of `tauri.conf.json` so that plain builds
+and `cargo test` don't need the binary):
+
+```bash
+cargo tauri build --config src-tauri/tauri.bundle.json
 ```
 
 ```bash
@@ -52,6 +71,9 @@ cargo run --bin downplayed-dev -- replay fixtures/lol/ranked_win.json
 `downplayed-dev record` records the next game as a pseudonymised fixture into the
 recordings folder the window lists (see [fixtures/lol/README.md](fixtures/lol/README.md)),
 and `downplayed-dev eog` prints what Downplayed reads from the end-of-game stats.
+`downplayed-dev probe` runs the encoder probe (NVENC → AMF → QSV → CPU) and lists the
+monitors, and `downplayed-dev capture 30` records 30 seconds the way a match is recorded
+and prints the frame, dropped-frame and duplicated-frame counts.
 
 > **This machine:** Visual Studio 2022 Community has a partial MSVC 14.42 toolset (no
 > headers). `cc-rs` picks it first, so building `ring` fails with "Cannot open include
@@ -65,11 +87,19 @@ and `downplayed-dev eog` prints what Downplayed reads from the end-of-game stats
 |---|---|
 | Settings | `%APPDATA%\Downplayed\settings.toml` (created on first run; every value optional) |
 | Logs | `%LOCALAPPDATA%\Downplayed\logs\downplayed.log`, 5 × 5 MB rotation, Riot identifiers scrubbed |
-| Matches | `%LOCALAPPDATA%\Downplayed\library\League of Legends\<date>_<time>_<queue>_<champion>\match.json` (UTC), one folder per tracked match |
+| Matches | `%LOCALAPPDATA%\Downplayed\library\League of Legends\<date>_<time>_<queue>_<champion>\` (UTC), one folder per tracked match: `match.json`, and `match.mp4` when it was recorded |
+| Encoder probe | `%LOCALAPPDATA%\Downplayed\capture-probe.json`: which encoder works here, probed once per ffmpeg binary |
 | Recordings | `%LOCALAPPDATA%\Downplayed\recordings`, where `downplayed-dev record` saves by default |
 | `DOWNPLAYED_HOME` | Put settings, logs, matches and recordings under one folder instead (development) |
 | `DOWNPLAYED_LOG` | Override the log level, e.g. `debug` |
 | `DOWNPLAYED_OPEN_WINDOW` | Open the window at startup (`hidden`: create it invisible, for smoke tests) |
+
+Capture settings live in `[capture]`: `enabled`, `fps` (60), `bitrate_mbps` (10),
+`encoder` (`auto`, or e.g. `h264_nvenc`) and `ffmpeg_path` (empty: the bundled ffmpeg).
+The resolution is the monitor's League runs on. While a match is recorded ffmpeg writes
+a fragmented MP4 with a keyframe every second, so a crash keeps the file; when it ends
+the file is remuxed (a stream copy) into a regular MP4, which a player opens without
+reading through it.
 
 ## Layout
 
@@ -82,10 +112,14 @@ src-tauri/src/
   league/client.rs           League client (LCU): lockfile/argument discovery, REST, WSS phase feed
   league/tls.rs              trust only Riot's root (certs/riotgames.pem), strict verification
   tracker/                   normalize, streaks, moments, clock, machine (B3), session, runtime
+  capture/                   ffmpeg sidecar (ddagrab + NVENC/AMF/QSV), encoder probe, monitor
+                             lookup (DXGI), controller that records each match
+  library.rs                 match folders: match.json, match.mp4
   replay.rs, bin/            fixture replay and the downplayed-dev tool
 src-tauri/tests/             fake HTTPS Live Client API + fake LCU, end-to-end runtime tests
 fixtures/lol/                synthetic Live Client / LCU fixtures and expected replay output
-ui/                          Vite + Svelte status window
+ui/                          Vite + Svelte window: status, matches, review with video
+tools/fetch-ffmpeg.ps1       pinned LGPL ffmpeg build (URL + SHA-256)
 ```
 
 Downplayed isn't endorsed by Riot Games and doesn't reflect the views or opinions of

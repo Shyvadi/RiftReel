@@ -10,6 +10,8 @@ use serde::de::{Deserializer, MapAccess, Visitor};
 use serde::ser::{SerializeMap, Serializer};
 use serde::{Deserialize, Serialize};
 
+use crate::capture::probe::CANDIDATES;
+use crate::capture::CaptureConfig;
 use crate::tracker::moments::DEFAULT_MAX_MOMENT_S;
 use crate::tracker::normalize::{MarkerConfig, MarkerKind, MarkerWindow};
 use crate::tracker::runtime::TrackerConfig;
@@ -23,6 +25,9 @@ const MAX_WINDOW_S: f64 = 180.0;
 const HEADER: &str = "\
 # Downplayed settings. Restart Downplayed after editing.
 # Every value is optional; anything missing falls back to its default.
+# [capture]: encoder = \"auto\" probes NVENC, AMF, QSV, then the CPU once and keeps the
+#   answer; or name one (h264_nvenc, hevc_nvenc, av1_nvenc, h264_amf, h264_qsv, ...).
+#   ffmpeg_path = \"\" uses the bundled ffmpeg.
 # [markers.<type>]: pre_s / post_s are seconds kept before / after the event.
 ";
 
@@ -32,6 +37,7 @@ pub struct Settings {
     pub schema: u32,
     pub logging: LoggingSettings,
     pub tracker: TrackerSettings,
+    pub capture: CaptureSettings,
     pub ui: UiSettings,
     pub markers: MarkerSettings,
 }
@@ -42,9 +48,94 @@ impl Default for Settings {
             schema: SETTINGS_SCHEMA,
             logging: LoggingSettings::default(),
             tracker: TrackerSettings::default(),
+            capture: CaptureSettings::default(),
             ui: UiSettings::default(),
             markers: MarkerSettings::default(),
         }
+    }
+}
+
+/// `[capture]`: full-match video (doc 03 §5). The resolution is the monitor's League
+/// runs on.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CaptureSettings {
+    /// Record each tracked match to `match.mp4` in its library folder.
+    pub enabled: bool,
+    pub fps: u32,
+    pub bitrate_mbps: f64,
+    /// `auto`, or an ffmpeg encoder name.
+    pub encoder: String,
+    /// An ffmpeg with `ddagrab` to use instead of the bundled one; empty: bundled.
+    pub ffmpeg_path: String,
+}
+
+impl Default for CaptureSettings {
+    fn default() -> Self {
+        // The user's Outplayed settings: 2560×1440 (their monitor) at 60 fps, ~10 Mbps.
+        Self {
+            enabled: true,
+            fps: 60,
+            bitrate_mbps: 10.0,
+            encoder: AUTO_ENCODER.into(),
+            ffmpeg_path: String::new(),
+        }
+    }
+}
+
+const AUTO_ENCODER: &str = "auto";
+const FPS_RANGE: (u32, u32) = (10, 240);
+const BITRATE_RANGE_MBPS: (f64, f64) = (1.0, 150.0);
+/// Encoders `encoder` may name besides the probe candidates.
+const OTHER_ENCODERS: [&str; 7] = [
+    "hevc_nvenc",
+    "av1_nvenc",
+    "hevc_amf",
+    "av1_amf",
+    "hevc_qsv",
+    "av1_qsv",
+    "h264_mf",
+];
+
+impl CaptureSettings {
+    fn validate(&mut self) -> Vec<String> {
+        let mut warnings = Vec::new();
+        let (low, high) = FPS_RANGE;
+        if !(low..=high).contains(&self.fps) {
+            let fps = self.fps.clamp(low, high);
+            warnings.push(format!(
+                "capture.fps = {} is out of range; using {fps}",
+                self.fps
+            ));
+            self.fps = fps;
+        }
+        let (low, high) = BITRATE_RANGE_MBPS;
+        if !(self.bitrate_mbps.is_finite() && (low..=high).contains(&self.bitrate_mbps)) {
+            let bitrate = if self.bitrate_mbps.is_finite() {
+                self.bitrate_mbps.clamp(low, high)
+            } else {
+                CaptureSettings::default().bitrate_mbps
+            };
+            warnings.push(format!(
+                "capture.bitrate_mbps = {} is out of range; using {bitrate}",
+                self.bitrate_mbps
+            ));
+            self.bitrate_mbps = bitrate;
+        }
+        let encoder = self.encoder.trim().to_ascii_lowercase();
+        let known = encoder == AUTO_ENCODER
+            || CANDIDATES.contains(&encoder.as_str())
+            || OTHER_ENCODERS.contains(&encoder.as_str());
+        if known {
+            self.encoder = encoder;
+        } else {
+            warnings.push(format!(
+                "capture.encoder = {:?} is not an encoder Downplayed knows; using auto",
+                self.encoder
+            ));
+            self.encoder = AUTO_ENCODER.into();
+        }
+        warnings
     }
 }
 
@@ -303,7 +394,23 @@ impl Settings {
         } else {
             self.logging.level = level;
         }
+        warnings.extend(self.capture.validate());
         warnings
+    }
+
+    /// Capture as configured, recording into `paths`' library.
+    pub fn capture_config(&self, paths: &AppPaths) -> CaptureConfig {
+        let capture = &self.capture;
+        let path = capture.ffmpeg_path.trim();
+        CaptureConfig {
+            enabled: capture.enabled,
+            fps: capture.fps,
+            bitrate_kbps: (capture.bitrate_mbps * 1000.0).round() as u32,
+            encoder: (capture.encoder != AUTO_ENCODER).then(|| capture.encoder.clone()),
+            ffmpeg: (!path.is_empty()).then(|| PathBuf::from(path)),
+            matches_dir: paths.matches_dir.clone(),
+            probe_file: paths.capture_probe_file.clone(),
+        }
     }
 
     pub fn tracker_config(&self) -> TrackerConfig {
@@ -331,6 +438,8 @@ pub struct AppPaths {
     pub matches_dir: PathBuf,
     /// Where `downplayed-dev record` saves recordings by default; the window lists them.
     pub recordings_dir: PathBuf,
+    /// The stored encoder probe (which encoder works on this machine).
+    pub capture_probe_file: PathBuf,
 }
 
 impl AppPaths {
@@ -367,6 +476,7 @@ impl AppPaths {
             log_dir: data_dir.join("logs"),
             matches_dir: data_dir.join("library").join("League of Legends"),
             recordings_dir: data_dir.join("recordings"),
+            capture_probe_file: data_dir.join("capture-probe.json"),
         }
     }
 }
@@ -465,6 +575,54 @@ mod tests {
                 .window(MarkerKind::Voidgrubs),
             MarkerWindow::on(10.0, 8.0)
         );
+    }
+
+    #[test]
+    fn capture_defaults_and_overrides() {
+        let defaults = Settings::default();
+        assert!(defaults.to_toml().contains("[capture]"));
+        let paths = AppPaths::under(PathBuf::from(r"C:\dp"));
+        let config = defaults.capture_config(&paths);
+        assert!(config.enabled);
+        assert_eq!((config.fps, config.bitrate_kbps), (60, 10_000));
+        assert_eq!(config.encoder, None, "auto: the probe decides");
+        assert_eq!(config.ffmpeg, None, "the bundled ffmpeg");
+        assert_eq!(config.matches_dir, paths.matches_dir);
+        assert_eq!(
+            config.probe_file,
+            PathBuf::from(r"C:\dp").join("capture-probe.json")
+        );
+
+        let mut settings = Settings::from_toml(
+            "[capture]\nenabled = false\nfps = 30\nbitrate_mbps = 6.5\nencoder = \"HEVC_NVENC\"\nffmpeg_path = 'D:\\tools\\ffmpeg.exe'\n",
+        )
+        .unwrap();
+        assert!(settings.validate().is_empty());
+        let config = settings.capture_config(&paths);
+        assert!(!config.enabled);
+        assert_eq!((config.fps, config.bitrate_kbps), (30, 6_500));
+        assert_eq!(config.encoder.as_deref(), Some("hevc_nvenc"));
+        assert_eq!(config.ffmpeg, Some(PathBuf::from(r"D:\tools\ffmpeg.exe")));
+        // An integer bitrate is fine too.
+        assert_eq!(
+            Settings::from_toml("[capture]\nbitrate_mbps = 12\n")
+                .unwrap()
+                .capture
+                .bitrate_mbps,
+            12.0
+        );
+    }
+
+    #[test]
+    fn bad_capture_values_fall_back() {
+        let mut settings = Settings::from_toml(
+            "[capture]\nfps = 1000\nbitrate_mbps = 0\nencoder = \"libx265-turbo\"\n",
+        )
+        .unwrap();
+        assert_eq!(settings.validate().len(), 3);
+        assert_eq!(settings.capture.fps, 240);
+        assert_eq!(settings.capture.bitrate_mbps, 1.0);
+        assert_eq!(settings.capture.encoder, "auto");
     }
 
     #[test]

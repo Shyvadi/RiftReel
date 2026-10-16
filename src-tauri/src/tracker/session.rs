@@ -12,6 +12,7 @@ use super::machine::EndReason;
 use super::moments::{build_moments, Moment, DEFAULT_MAX_MOMENT_S};
 use super::normalize::{GameResult, Kda, Marker, MarkerChange, MarkerConfig, Normalizer};
 use super::roster::{PlayerIdentity, Roster, Team};
+use crate::capture::{Recording, RecordingInfo};
 use crate::league::live::EventCursor;
 use crate::league::models::{
     ActivePlayer, EogStatsBlock, GameStats, GameflowSession, Player, RawEvent,
@@ -139,7 +140,7 @@ pub enum ResultSource {
     GameEndEvent,
 }
 
-/// Everything known about a finished match. It becomes `match.json` in phase 3.
+/// Everything known about a finished match; the library saves it as `match.json`.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MatchSummary {
@@ -156,6 +157,9 @@ pub struct MatchSummary {
     pub ended: EndReason,
     pub started_wall_ms: u64,
     pub event_count: usize,
+    /// The match's video, when it was recorded. Marker `videoTimeS` are seconds into it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recording: Option<RecordingInfo>,
     pub markers: Vec<Marker>,
     pub moments: Vec<Moment>,
 }
@@ -179,6 +183,7 @@ pub struct MatchSession {
     skip: Option<SkipReason>,
     missing_active_player: u8,
     event_count: usize,
+    recording: Option<Recording>,
 }
 
 impl MatchSession {
@@ -205,13 +210,31 @@ impl MatchSession {
             skip: None,
             missing_active_player: 0,
             event_count: 0,
+            recording: None,
         }
     }
 
-    /// When tracking started. Recording will start here in phase 2, so it's the
-    /// reference point for marker video times.
+    /// When tracking started: the reference for marker video times when the match
+    /// wasn't recorded.
     pub fn started_at(&self) -> Instant {
         self.started_at
+    }
+
+    pub fn started_wall_ms(&self) -> u64 {
+        self.started_wall_ms
+    }
+
+    /// The queue as the League client describes it (`Ranked Solo/Duo`), once known.
+    pub fn queue(&self) -> Option<&str> {
+        self.lcu_session
+            .as_ref()
+            .map(|s| s.game_data.queue.description.as_str())
+            .filter(|d| !d.is_empty())
+    }
+
+    /// The match's video: marker video times are counted from its first frame.
+    pub fn set_recording(&mut self, recording: Recording) {
+        self.recording = Some(recording);
     }
 
     /// "Me" is known, so events can be attributed.
@@ -457,16 +480,25 @@ impl MatchSession {
             (None, None) => (None, None),
         };
 
+        // Video time 0 is the recording's first frame (or, unrecorded, tracking's start).
+        let video_start = self
+            .recording
+            .as_ref()
+            .map_or(self.started_at, |r| r.started_at);
         let markers: Vec<Marker> = self
             .markers()
             .iter()
             .cloned()
             .map(|mut marker| {
-                marker.video_time_s = self.clock.video_time(marker.game_time_s, self.started_at);
+                marker.video_time_s = self.clock.video_time(marker.game_time_s, video_start);
                 marker
             })
             .collect();
         let moments = build_moments(&markers, self.config.max_moment_s);
+        let recording = self.recording.as_ref().map(|r| RecordingInfo {
+            game_time_at_start_s: self.clock.game_time_at(r.started_at),
+            ..r.info.clone()
+        });
 
         MatchSummary {
             game_id: self
@@ -499,6 +531,7 @@ impl MatchSession {
             ended,
             started_wall_ms: self.started_wall_ms,
             event_count: self.event_count,
+            recording,
             markers,
             moments,
         }
@@ -651,6 +684,59 @@ mod tests {
         );
     }
 
+    #[test]
+    fn marker_video_times_count_from_the_recordings_first_frame() {
+        let fixture = fixture("ranked_win.json");
+        let mut session = loaded_session(&fixture);
+        let start = session.started_at();
+        session.record_clock(100.0, start, start);
+        // The video's first frame came 3 s after tracking began (game time 103).
+        session.set_recording(Recording {
+            started_at: start + std::time::Duration::from_secs(3),
+            info: RecordingInfo {
+                file: "match.mp4".into(),
+                start_wall_ms: 1_792_080_723_000,
+                end_wall_ms: 1_792_082_526_000,
+                game_time_at_start_s: None,
+                encoder: "h264_nvenc".into(),
+                width: 2560,
+                height: 1440,
+                fps: 60,
+                bitrate_kbps: 10_000,
+                frames: 108_000,
+                dropped_frames: 0,
+                duplicated_frames: 4,
+                error: None,
+                folder: std::path::PathBuf::from(r"C:\library\2026-10-15_16-12-00"),
+            },
+        });
+        session.ingest(fixture.events().unwrap());
+        let summary = session.summary(EndReason::GameEnd);
+        let first = &summary.markers[0];
+        let video = first.video_time_s.unwrap();
+        assert!(
+            (video - (first.game_time_s - 103.0)).abs() < 1e-6,
+            "{video}"
+        );
+        let recording = summary.recording.as_ref().unwrap();
+        assert!((recording.game_time_at_start_s.unwrap() - 103.0).abs() < 1e-6);
+
+        let json = serde_json::to_value(&summary).unwrap();
+        assert_eq!(json["recording"]["file"], "match.mp4");
+        assert_eq!(json["recording"]["startWallMs"], 1_792_080_723_000_u64);
+        assert_eq!(json["recording"]["droppedFrames"], 0);
+        assert!(
+            json["recording"].get("folder").is_none(),
+            "no absolute paths in match.json"
+        );
+        assert!(
+            serde_json::to_value(loaded_session(&fixture).summary(EndReason::GameEnd))
+                .unwrap()
+                .get("recording")
+                .is_none()
+        );
+    }
+
     /// Collects formatted log output for one closure.
     #[derive(Clone, Default)]
     struct Capture(Arc<Mutex<Vec<u8>>>);
@@ -673,7 +759,15 @@ mod tests {
             .with_ansi(false)
             .with_writer(move || writer.clone())
             .finish();
-        tracing::subscriber::with_default(subscriber, f);
+        // While only one subscriber is registered, tracing-core works out a callsite's
+        // interest from the default of whichever thread hits it first, so a test on
+        // another thread (no subscriber) could switch this one's events off. A second
+        // registered subscriber makes it consult every registered one instead.
+        let _second = tracing::Dispatch::new(tracing::subscriber::NoSubscriber::default());
+        tracing::subscriber::with_default(subscriber, || {
+            tracing::callsite::rebuild_interest_cache();
+            f()
+        });
         let bytes = capture.0.lock().unwrap().clone();
         String::from_utf8(bytes).unwrap()
     }

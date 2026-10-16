@@ -60,10 +60,10 @@ pub enum EndReason {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Effect {
-    /// Champ select: warm up the encoder. Capture lands in phase 2; for now this is a
-    /// no-op.
+    /// Champ select: find the encoder (probe once) so capture starts without delay.
     PrewarmCapture,
-    /// A new match: create a match session and start polling the Live Client API.
+    /// A new match: create a match session, start polling the Live Client API and
+    /// start recording.
     StartMatch,
     /// Back in the same match after a reconnect: keep the session and cursor and re-read
     /// `eventdata` right away.

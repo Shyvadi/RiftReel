@@ -10,3 +10,6 @@
 
 # Local tool output
 *.log
+
+# ffmpeg from tools/fetch-ffmpeg.ps1 (never committed)
+/src-tauri/binaries/

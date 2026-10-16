@@ -1,11 +1,16 @@
-//! Match history for the window: the library of doc 03 §7 before there is video. Every
-//! finished match gets a folder with its `match.json` (the tracker's [`MatchSummary`]
-//! plus `schema` and `id`). Recordings saved by `downplayed-dev record` are listed too
-//! and replayed into the same summary, so the window reviews both the same way.
+//! Match history for the window: the library of doc 03 §7. Every finished match gets a
+//! folder with its `match.json` (the tracker's [`MatchSummary`] plus `schema` and `id`)
+//! and, when it was recorded, `match.mp4`. Recordings saved by `downplayed-dev record`
+//! are listed too and replayed into the same summary, so the window reviews both the
+//! same way.
+//!
+//! A recorded match's folder is created when recording starts, named from what is known
+//! then (`<date>_<time>[_<queue>]`), and renamed to the full name when the match is
+//! saved.
 
 use std::io;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
 use serde_json::Value;
@@ -16,6 +21,8 @@ use crate::tracker::session::{MatchSummary, SessionConfig};
 
 pub const MATCH_FILE: &str = "match.json";
 pub const MATCH_SCHEMA: u32 = 1;
+/// The full-match video in a match folder.
+pub const VIDEO_FILE: &str = "match.mp4";
 
 /// Recordings are addressed as `recording:<file stem>`.
 const RECORDING_PREFIX: &str = "recording:";
@@ -46,6 +53,8 @@ pub struct MatchCard {
     pub assists: Option<u64>,
     pub duration_s: Option<f64>,
     pub moments: usize,
+    /// The match was recorded (`match.mp4` is there).
+    pub video: bool,
 }
 
 #[derive(Serialize)]
@@ -75,31 +84,28 @@ impl Library {
     }
 
     /// Saves a finished match as `<date>_<time>_<queue>_<champion>/match.json` (UTC) and
-    /// returns its id, the folder name.
+    /// returns its id, the folder name. A recorded match keeps its folder (and video),
+    /// renamed to that name.
     pub fn save(&self, summary: &MatchSummary) -> io::Result<String> {
-        let started = UNIX_EPOCH + std::time::Duration::from_millis(summary.started_wall_ms);
-        let (date, hour, minute) = utc_parts(started);
-        let second = summary.started_wall_ms / 1000 % 60;
-        let mut base = format!("{date}_{hour:02}-{minute:02}-{second:02}");
-        for part in [
-            summary.queue.as_deref().or(summary.game_mode.as_deref()),
-            summary.champion.as_deref(),
-        ]
-        .into_iter()
-        .flatten()
-        {
-            base.push('_');
-            base.push_str(&slug(part));
-        }
+        let base = folder_name(
+            summary.started_wall_ms,
+            [
+                summary.queue.as_deref().or(summary.game_mode.as_deref()),
+                summary.champion.as_deref(),
+            ],
+        );
         std::fs::create_dir_all(&self.matches_dir)?;
-        let mut id = base.clone();
-        let mut n = 1;
-        while self.matches_dir.join(&id).exists() {
-            n += 1;
-            id = format!("{base}-{n}");
-        }
-        let dir = self.matches_dir.join(&id);
-        std::fs::create_dir_all(&dir)?;
+        let recorded = summary
+            .recording
+            .as_ref()
+            .map(|r| r.folder.as_path())
+            .filter(|folder| {
+                folder.is_dir() && folder.parent() == Some(self.matches_dir.as_path())
+            });
+        let (id, dir) = match recorded {
+            Some(folder) => adopt_folder(&self.matches_dir, folder, &base),
+            None => create_unique_dir(&self.matches_dir, &base)?,
+        };
         let file = MatchFile {
             schema: MATCH_SCHEMA,
             id: &id,
@@ -126,7 +132,9 @@ impl Library {
             };
             if let Some(summary) = read_json(&entry.join(MATCH_FILE)) {
                 let when = summary["startedWallMs"].as_u64().unwrap_or_default();
-                cards.push(card(id, Source::Game, when, &summary));
+                let mut card = card(id, Source::Game, when, &summary);
+                card.video = video_path(&entry, &summary).is_some();
+                cards.push(card);
             }
         }
         for entry in read_dir(&self.recordings_dir) {
@@ -150,7 +158,8 @@ impl Library {
     }
 
     /// A match or recording as the window reviews it: the summary's fields plus `id`,
-    /// `source` and, for recordings, `description`.
+    /// `source`, `videoPath` (the recorded video, for the asset protocol) and, for
+    /// recordings, `description`.
     pub fn get(&self, id: &str) -> Option<Value> {
         if let Some(stem) = id.strip_prefix(RECORDING_PREFIX) {
             let path = self
@@ -164,10 +173,14 @@ impl Library {
             object.insert("description".into(), description.into());
             return Some(summary);
         }
-        let mut summary = read_json(&self.matches_dir.join(safe_name(id)?).join(MATCH_FILE))?;
-        summary
-            .as_object_mut()?
-            .insert("source".into(), "game".into());
+        let dir = self.matches_dir.join(safe_name(id)?);
+        let mut summary = read_json(&dir.join(MATCH_FILE))?;
+        let video = video_path(&dir, &summary);
+        let object = summary.as_object_mut()?;
+        object.insert("source".into(), "game".into());
+        if let Some(video) = video {
+            object.insert("videoPath".into(), video.display().to_string().into());
+        }
         Some(summary)
     }
 
@@ -194,7 +207,97 @@ fn card(id: String, source: Source, when_ms: u64, summary: &Value) -> MatchCard 
         assists: summary["kda"]["assists"].as_u64(),
         duration_s: summary["durationS"].as_f64(),
         moments: summary["moments"].as_array().map_or(0, Vec::len),
+        video: false,
     }
+}
+
+/// The match's video, if `match.json` names one (a plain file name: never a path out of
+/// the folder) and it exists.
+fn video_path(dir: &Path, summary: &Value) -> Option<PathBuf> {
+    let file = safe_name(summary["recording"]["file"].as_str()?)?;
+    Some(dir.join(file)).filter(|path| path.is_file())
+}
+
+/// `<date>_<time>` of `started_wall_ms` (UTC), then each known part, slugged.
+fn folder_name<const N: usize>(started_wall_ms: u64, parts: [Option<&str>; N]) -> String {
+    let started = UNIX_EPOCH + Duration::from_millis(started_wall_ms);
+    let (date, hour, minute) = utc_parts(started);
+    let second = started_wall_ms / 1000 % 60;
+    let mut name = format!("{date}_{hour:02}-{minute:02}-{second:02}");
+    for part in parts.into_iter().flatten() {
+        let part = slug(part);
+        if !part.is_empty() {
+            name.push('_');
+            name.push_str(&part);
+        }
+    }
+    name
+}
+
+/// Creates `<dir>/<base>`, or `<base>-2`, `-3`… if taken. Never reuses a folder.
+fn create_unique_dir(dir: &Path, base: &str) -> io::Result<(String, PathBuf)> {
+    std::fs::create_dir_all(dir)?;
+    for n in 1.. {
+        let id = if n == 1 {
+            base.to_owned()
+        } else {
+            format!("{base}-{n}")
+        };
+        let path = dir.join(&id);
+        match std::fs::create_dir(&path) {
+            Ok(()) => return Ok((id, path)),
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(e),
+        }
+    }
+    unreachable!("an unused folder name always exists")
+}
+
+/// A folder for a match that is starting to record: `<date>_<time>[_<queue>]` in the
+/// matches folder (the champion isn't known yet; [`Library::save`] adds it).
+pub fn reserve_folder(
+    matches_dir: &Path,
+    started_wall_ms: u64,
+    queue: Option<&str>,
+) -> io::Result<PathBuf> {
+    create_unique_dir(matches_dir, &folder_name(started_wall_ms, [queue])).map(|(_, path)| path)
+}
+
+/// Renames a recorded match's folder to `base` (or `base-2`…). If Windows refuses (a
+/// file in it still open), the folder keeps its recorded name; the id is whichever
+/// name it ends up with.
+fn adopt_folder(matches_dir: &Path, folder: &Path, base: &str) -> (String, PathBuf) {
+    let current = folder
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or_default()
+        .to_owned();
+    if current == base {
+        return (current, folder.to_owned());
+    }
+    for attempt in 0..5 {
+        let target = (1..)
+            .map(|n| {
+                if n == 1 {
+                    base.to_owned()
+                } else {
+                    format!("{base}-{n}")
+                }
+            })
+            .find(|id| !matches_dir.join(id).exists())
+            .expect("an unused folder name always exists");
+        match std::fs::rename(folder, matches_dir.join(&target)) {
+            Ok(()) => return (target.clone(), matches_dir.join(target)),
+            Err(e) if attempt < 4 => {
+                tracing::debug!(error = %e, "match folder busy; retrying the rename");
+                std::thread::sleep(Duration::from_millis(250));
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, folder = %current, "could not rename the match folder; keeping its name")
+            }
+        }
+    }
+    (current, folder.to_owned())
 }
 
 /// A file or folder name from the window: one plain path component, nothing else.
@@ -340,6 +443,56 @@ mod tests {
             .as_str()
             .unwrap()
             .contains("synthetic"));
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn recording_folders_are_reserved_and_never_reused() {
+        let root = temp_dir("reserve");
+        let matches = root.join("matches");
+        let started = 1_792_080_720_000; // 2026-10-15 16:12:00 UTC
+        let name = |path: PathBuf| path.file_name().unwrap().to_string_lossy().into_owned();
+        assert_eq!(
+            name(reserve_folder(&matches, started, Some("Ranked Solo/Duo")).unwrap()),
+            "2026-10-15_16-12-00_Ranked-Solo-Duo"
+        );
+        assert_eq!(
+            name(reserve_folder(&matches, started, Some("Ranked Solo/Duo")).unwrap()),
+            "2026-10-15_16-12-00_Ranked-Solo-Duo-2"
+        );
+        assert_eq!(
+            name(reserve_folder(&matches, started, None).unwrap()),
+            "2026-10-15_16-12-00"
+        );
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn video_paths_never_leave_the_match_folder() {
+        let root = temp_dir("video");
+        let matches = root.join("matches");
+        std::fs::create_dir_all(matches.join("m1")).unwrap();
+        std::fs::create_dir_all(root.join("secret")).unwrap();
+        std::fs::write(root.join("secret").join("x.mp4"), b"").unwrap();
+        std::fs::write(matches.join("m1").join(VIDEO_FILE), b"").unwrap();
+        let library = Library::new(
+            matches.clone(),
+            root.join("recordings"),
+            SessionConfig::default(),
+        );
+        for (file, plays) in [
+            ("match.mp4", true),
+            (r"..\..\secret\x.mp4", false),
+            ("../../secret/x.mp4", false),
+            (r"C:\secret\x.mp4", false),
+            ("missing.mp4", false),
+        ] {
+            let json = serde_json::json!({ "recording": { "file": file } }).to_string();
+            std::fs::write(matches.join("m1").join(MATCH_FILE), json).unwrap();
+            let review = library.get("m1").unwrap();
+            assert_eq!(review.get("videoPath").is_some(), plays, "{file}");
+            assert_eq!(library.list()[0].video, plays, "{file}");
+        }
         std::fs::remove_dir_all(&root).ok();
     }
 

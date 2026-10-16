@@ -4,6 +4,7 @@ use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder, Wry};
 
+use crate::capture::CaptureState;
 use crate::tracker::machine::TrackerState;
 use crate::tracker::runtime::TrackerStatus;
 
@@ -104,6 +105,11 @@ pub fn show_status(app: &AppHandle, status: &TrackerStatus) {
 }
 
 fn status_text(status: &TrackerStatus) -> String {
+    let recording = status
+        .capture
+        .as_ref()
+        .is_some_and(|c| c.state == CaptureState::Recording);
+    let in_game = if recording { "Recording" } else { "In game" };
     match status.state {
         TrackerState::Idle if status.lcu_connected => "Idle · League client open".into(),
         TrackerState::Idle => "Idle · waiting for League".into(),
@@ -113,9 +119,9 @@ fn status_text(status: &TrackerStatus) -> String {
             Some(current) if status.reconnecting => {
                 format!("Reconnecting · {} moments", current.moments.len())
             }
-            Some(current) => format!("In game · {} moments", current.moments.len()),
-            None => "In game".into(),
+            Some(current) => format!("{in_game} · {} moments", current.moments.len()),
+            None => in_game.into(),
         },
-        TrackerState::Finalizing => "Match over · summarising".into(),
+        TrackerState::Finalizing => "Match over · saving".into(),
     }
 }

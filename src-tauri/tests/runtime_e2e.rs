@@ -1,19 +1,26 @@
 //! The tracker runtime end to end: League client phases (in-process fake) plus a fake
-//! Live Client API over HTTPS, through a crash/reconnect to a recorded win.
+//! Live Client API over HTTPS, through a crash/reconnect to a recorded win, and the
+//! capture controller driven by the match (with a scripted ffmpeg).
 
 mod support;
 
 use std::collections::HashSet;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::Arc;
-use std::time::Duration;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use futures_util::future::BoxFuture;
-use tokio::sync::{mpsc, watch};
+use tokio::sync::{mpsc, oneshot, watch};
 
+use downplayed_lib::capture::controller::{CaptureBackend, CaptureTimings};
+use downplayed_lib::capture::display::Display;
+use downplayed_lib::capture::ffmpeg::{CapturePlan, CaptureRun, ExitReport, Progress};
+use downplayed_lib::capture::{CaptureConfig, CaptureController, CaptureState};
 use downplayed_lib::league::client::{LcuError, LeagueClient};
 use downplayed_lib::league::live::LiveClient;
 use downplayed_lib::league::models::{EogStatsBlock, GameflowPhase, GameflowSession};
+use downplayed_lib::library::Library;
 use downplayed_lib::settings::Settings;
 use downplayed_lib::tracker::machine::{EndReason, TrackerState};
 use downplayed_lib::tracker::normalize::{GameResult, Kda};
@@ -79,6 +86,14 @@ struct Harness {
 
 impl Harness {
     async fn start(fixture: &str, config: TrackerConfig) -> Self {
+        Self::start_with(fixture, config, None).await
+    }
+
+    async fn start_with(
+        fixture: &str,
+        config: TrackerConfig,
+        capture: Option<CaptureController>,
+    ) -> Self {
         let pki = TestPki::new();
         let server = FakeLiveServer::start(&pki, load_fixture(fixture)).await;
         server.set_up(false); // no game yet
@@ -88,12 +103,16 @@ impl Harness {
             clock_sample: Duration::from_millis(50),
             live_probe: Duration::from_millis(20),
             finalize_wait: Duration::from_secs(5),
+            end_screen_tail: Duration::from_millis(20),
         };
         let (status_tx, status) = watch::channel(TrackerStatus::default());
         let (summary_tx, summaries) = mpsc::unbounded_channel();
         let (events, events_rx) = mpsc::channel(16);
-        let runtime =
+        let mut runtime =
             TrackerRuntime::new(config, live, timings, status_tx).with_summaries(summary_tx);
+        if let Some(capture) = capture {
+            runtime = runtime.with_capture(capture);
+        }
         tokio::spawn(runtime.run(events_rx));
         Self {
             server,
@@ -454,4 +473,246 @@ async fn aram_loss_has_no_victory_and_records_the_loss() {
     assert_eq!(summary.result, Some(GameResult::Lose));
     assert!(!labels(&summary).contains(&"victory"));
     assert!(labels(&summary).contains(&"triple_kill"));
+}
+
+/// A scripted ffmpeg: a frame every 5 ms, timestamped from its own start, until it is
+/// asked to stop.
+struct FakeCapture {
+    plans: Mutex<Vec<CapturePlan>>,
+    encoder_asks: AtomicUsize,
+    remuxed: AtomicUsize,
+}
+
+impl FakeCapture {
+    fn new() -> Arc<Self> {
+        Arc::new(Self {
+            plans: Mutex::new(Vec::new()),
+            encoder_asks: AtomicUsize::new(0),
+            remuxed: AtomicUsize::new(0),
+        })
+    }
+}
+
+impl CaptureBackend for FakeCapture {
+    fn game_display(&self) -> Option<Display> {
+        Some(Display {
+            adapter: 0,
+            output: 0,
+            adapter_name: "Test GPU".into(),
+            device_name: r"\\.\DISPLAY1".into(),
+            width: 1920,
+            height: 1080,
+        })
+    }
+
+    fn primary_display(&self) -> Option<Display> {
+        self.game_display()
+    }
+
+    fn encoder(&self) -> BoxFuture<'_, Result<String, String>> {
+        Box::pin(async move {
+            self.encoder_asks.fetch_add(1, Ordering::SeqCst);
+            Ok("h264_nvenc".into())
+        })
+    }
+
+    fn forget_encoder(&self) -> BoxFuture<'_, ()> {
+        Box::pin(async {})
+    }
+
+    fn start(&self, plan: CapturePlan) -> BoxFuture<'_, Result<CaptureRun, String>> {
+        Box::pin(async move {
+            std::fs::write(&plan.file, b"video").map_err(|e| e.to_string())?;
+            self.plans.lock().unwrap().push(plan);
+            let (progress_tx, progress) = mpsc::channel(64);
+            let (stop, mut stop_rx) = oneshot::channel::<()>();
+            let (exited_tx, exited) = oneshot::channel();
+            tokio::spawn(async move {
+                let began = Instant::now();
+                let mut frame = 0;
+                loop {
+                    tokio::select! {
+                        _ = &mut stop_rx => break,
+                        _ = tokio::time::sleep(Duration::from_millis(5)) => {
+                            frame += 1;
+                            let report = Progress {
+                                frame,
+                                out_time: Some(began.elapsed()),
+                                ..Progress::default()
+                            };
+                            let _ = progress_tx.try_send((Instant::now(), report));
+                        }
+                    }
+                }
+                let _ = exited_tx.send(ExitReport {
+                    success: true,
+                    detail: None,
+                });
+            });
+            Ok(CaptureRun {
+                progress,
+                stop,
+                exited,
+            })
+        })
+    }
+
+    fn finish_file(&self, _file: PathBuf) -> BoxFuture<'_, Result<(), String>> {
+        Box::pin(async move {
+            self.remuxed.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        })
+    }
+}
+
+fn capture_dir(name: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!(
+        "downplayed-e2e-capture-{name}-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
+    dir
+}
+
+fn fake_controller(dir: &std::path::Path, backend: Arc<FakeCapture>) -> CaptureController {
+    let config = CaptureConfig {
+        enabled: true,
+        fps: 60,
+        bitrate_kbps: 10_000,
+        encoder: None,
+        ffmpeg: None,
+        matches_dir: dir.join("matches"),
+        probe_file: dir.join("capture-probe.json"),
+    };
+    CaptureController::new(config, backend).with_timings(CaptureTimings {
+        window_poll: Duration::from_millis(5),
+        window_wait: Duration::from_secs(5),
+        retry_after: Duration::from_millis(5),
+    })
+}
+
+fn capture_state(status: &TrackerStatus) -> Option<CaptureState> {
+    status.capture.as_ref().map(|c| c.state)
+}
+
+#[tokio::test]
+async fn the_match_is_recorded_and_saved_with_its_video() {
+    let dir = capture_dir("recorded");
+    let backend = FakeCapture::new();
+    let mut h = Harness::start_with(
+        "ranked_win",
+        Settings::default().tracker_config(),
+        Some(fake_controller(&dir, backend.clone())),
+    )
+    .await;
+    h.wait_for("recorder ready", |s| {
+        capture_state(s) == Some(CaptureState::Idle)
+    })
+    .await;
+
+    let lcu = FakeLcu::ranked_win();
+    h.send(RuntimeEvent::LcuConnected(lcu.clone())).await;
+    h.phase(GameflowPhase::ChampSelect).await;
+    h.wait_for("champ select", |s| s.state == TrackerState::Armed)
+        .await;
+    assert!(
+        eventually(WAIT, || backend.encoder_asks.load(Ordering::SeqCst) >= 1).await,
+        "champ select finds the encoder"
+    );
+    assert!(
+        backend.plans.lock().unwrap().is_empty(),
+        "nothing is captured in champ select"
+    );
+
+    h.server.set_game_time(20.0);
+    h.server.set_up(true);
+    h.phase(GameflowPhase::InProgress).await;
+    h.wait_for("recording", |s| {
+        capture_state(s) == Some(CaptureState::Recording)
+    })
+    .await;
+    h.server.set_game_time(600.0);
+    h.wait_for_event(6).await;
+    let summary = finish_with_end_of_game_stats(&mut h, &lcu).await;
+
+    let recording = summary.recording.clone().expect("the match was recorded");
+    assert_eq!(recording.file, "match.mp4");
+    assert!(recording.frames > 0 && recording.error.is_none());
+    assert_eq!(
+        (
+            recording.width,
+            recording.height,
+            recording.encoder.as_str()
+        ),
+        (1920, 1080, "h264_nvenc")
+    );
+    assert!(recording.game_time_at_start_s.is_some());
+    let recorded_as = recording.folder.file_name().unwrap().to_string_lossy();
+    assert!(
+        recorded_as.ends_with("_Ranked-Solo-Duo"),
+        "named when recording began (no champion yet): {recorded_as}"
+    );
+    assert!(summary.markers.iter().all(|m| m.video_time_s.is_some()));
+    assert_eq!(backend.plans.lock().unwrap().len(), 1);
+    assert_eq!(backend.remuxed.load(Ordering::SeqCst), 1);
+    h.wait_for("idle, recorder ready", |s| {
+        s.state == TrackerState::Idle && capture_state(s) == Some(CaptureState::Idle)
+    })
+    .await;
+
+    // The library keeps the folder and its video, renamed now the champion is known.
+    let library = Library::new(
+        dir.join("matches"),
+        dir.join("recordings"),
+        Settings::default().tracker_config().session,
+    );
+    let id = library.save(&summary).unwrap();
+    assert!(id.ends_with("_Ranked-Solo-Duo_Shyvana"), "{id}");
+    assert!(!recording.folder.exists(), "renamed, not copied");
+    let review = library.get(&id).unwrap();
+    assert_eq!(
+        PathBuf::from(review["videoPath"].as_str().unwrap()),
+        dir.join("matches").join(&id).join("match.mp4")
+    );
+    assert_eq!(review["recording"]["file"], "match.mp4");
+    assert!(review["recording"].get("folder").is_none());
+    assert!(library.list()[0].video);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[tokio::test]
+async fn a_spectated_game_keeps_no_recording() {
+    let dir = capture_dir("spectator");
+    let backend = FakeCapture::new();
+    let mut h = Harness::start_with(
+        "spectator",
+        Settings::default().tracker_config(),
+        Some(fake_controller(&dir, backend.clone())),
+    )
+    .await;
+    h.send(RuntimeEvent::GameProcess(true)).await;
+    h.server.set_game_time(260.0);
+    h.server.set_up(true);
+    h.wait_for("spectator detected", |s| {
+        s.current
+            .as_ref()
+            .is_some_and(|c| c.skipped == Some(SkipReason::Spectator))
+    })
+    .await;
+    h.wait_for("recording dropped", |s| {
+        capture_state(s) == Some(CaptureState::Idle)
+    })
+    .await;
+    h.send(RuntimeEvent::GameProcess(false)).await;
+    h.wait_for("idle", |s| s.state == TrackerState::Idle).await;
+    assert!(h.summaries.try_recv().is_err());
+    assert!(
+        !backend.plans.lock().unwrap().is_empty(),
+        "recording began before the spectator was confirmed"
+    );
+    let left: Vec<_> = std::fs::read_dir(dir.join("matches"))
+        .map(|entries| entries.flatten().map(|e| e.path()).collect())
+        .unwrap_or_default();
+    assert!(left.is_empty(), "the recording was deleted: {left:?}");
+    std::fs::remove_dir_all(&dir).ok();
 }

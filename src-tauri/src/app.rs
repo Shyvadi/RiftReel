@@ -1,7 +1,7 @@
 //! The tray application. It starts with no window and opens one on demand, which is
-//! destroyed when closed. The tracker runs in the background the whole time; each match
-//! it finishes is saved to the library and, by default, opened for review once the game
-//! has closed.
+//! destroyed when closed. The tracker runs in the background the whole time and records
+//! each match; each match it finishes is saved to the library and, by default, opened
+//! for review once the game has closed.
 
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
@@ -10,6 +10,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, RunEvent};
 use tokio::sync::{mpsc, watch};
 
+use crate::capture::{CaptureConfig, CaptureController};
 use crate::league::client::scan_processes;
 use crate::league::live::LiveClient;
 use crate::library::{Library, MatchCard};
@@ -120,6 +121,8 @@ pub fn run() {
         paths.recordings_dir.clone(),
         settings.tracker_config().session,
     ));
+    let capture = settings.capture_config(&paths);
+    let matches_dir = paths.matches_dir.clone();
 
     let (status_tx, status_rx) = watch::channel(TrackerStatus::default());
     let app = tauri::Builder::default()
@@ -135,8 +138,19 @@ pub fn run() {
             get_match
         ])
         .setup(move |app| {
+            // The review's <video> streams match.mp4 from here, in ranged reads; the
+            // asset protocol serves nothing outside the matches folder.
+            app.asset_protocol_scope()
+                .allow_directory(&matches_dir, true)?;
             tray::create(app.handle())?;
-            start_tracker(app.handle(), &settings, library, status_tx, status_rx);
+            start_tracker(
+                app.handle(),
+                &settings,
+                capture,
+                library,
+                status_tx,
+                status_rx,
+            );
             if let Some(value) = std::env::var_os(OPEN_WINDOW_ENV) {
                 tray::create_main_window(app.handle(), value != "hidden");
             }
@@ -160,6 +174,7 @@ pub fn run() {
 fn start_tracker(
     app: &AppHandle,
     settings: &Settings,
+    capture: CaptureConfig,
     library: Arc<Library>,
     status_tx: watch::Sender<TrackerStatus>,
     mut status_rx: watch::Receiver<TrackerStatus>,
@@ -168,13 +183,17 @@ fn start_tracker(
         Ok(live) => {
             let (events_tx, events_rx) = mpsc::channel(64);
             let (summary_tx, summary_rx) = mpsc::unbounded_channel();
+            if !capture.enabled {
+                tracing::info!("capture is off ([capture] enabled = false)");
+            }
             let runtime = TrackerRuntime::new(
                 settings.tracker_config(),
                 live,
                 Timings::default(),
                 status_tx,
             )
-            .with_summaries(summary_tx);
+            .with_summaries(summary_tx)
+            .with_capture(CaptureController::with_ffmpeg(capture));
             tauri::async_runtime::spawn(runtime.run(events_rx));
             tauri::async_runtime::spawn(watch_league(
                 events_tx,

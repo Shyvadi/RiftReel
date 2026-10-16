@@ -1,9 +1,10 @@
 //! Downplayed: a lightweight, local-first League of Legends clip recorder.
 //!
 //! This crate is the Rust core: the tray app shell, settings, scrubbed logging, Riot's
-//! local API clients ([`league`]) and the highlight tracker ([`tracker`]). Capture
-//! (phase 2) and the library (phase 3) build on top of it.
+//! local API clients ([`league`]), the highlight tracker ([`tracker`]), video capture
+//! through an ffmpeg sidecar ([`capture`]) and the match library ([`library`]).
 
+pub mod capture;
 pub mod league;
 pub mod library;
 pub mod logging;

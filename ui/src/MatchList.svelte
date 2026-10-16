@@ -30,6 +30,7 @@
             <span class="when muted">
               {when(match.whenMs)}
               {#if match.source === 'recording'}<span class="tag">recording</span>{/if}
+              {#if match.video}<span class="tag">video</span>{/if}
             </span>
           </button>
         </li>

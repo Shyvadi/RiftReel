@@ -100,6 +100,24 @@ impl GameClock {
         }
     }
 
+    /// Game time at a wall-clock instant: the inverse of [`wall_at`](Self::wall_at),
+    /// through the latest sample taken at or before it (the first sample, extrapolated
+    /// backwards, for instants before any). Negative before the game clock started, e.g.
+    /// during the loading screen.
+    pub fn game_time_at(&self, wall: Instant) -> Option<f64> {
+        let anchor = self
+            .samples
+            .iter()
+            .filter(|s| s.wall <= wall)
+            .max_by_key(|s| s.wall)
+            .or_else(|| self.samples.iter().min_by_key(|s| s.wall))?;
+        Some(if wall >= anchor.wall {
+            anchor.game_time + (wall - anchor.wall).as_secs_f64()
+        } else {
+            anchor.game_time - (anchor.wall - wall).as_secs_f64()
+        })
+    }
+
     /// Seconds into a recording that started at `recording_start`; negative if the
     /// moment happened before the recording began.
     pub fn video_time(&self, game_time: f64, recording_start: Instant) -> Option<f64> {
@@ -201,6 +219,26 @@ mod tests {
             clock.wall_at(500.0),
             Some(t0 + Duration::from_millis(10) + secs(300.0))
         );
+    }
+
+    #[test]
+    fn game_time_at_inverts_wall_at() {
+        let t0 = Instant::now() + secs(100.0);
+        let mut clock = GameClock::new();
+        assert_eq!(clock.game_time_at(t0), None);
+        clock.record_sample(ClockSample {
+            game_time: 5.0,
+            wall: t0,
+        });
+        clock.record_sample(ClockSample {
+            game_time: 15.0,
+            wall: t0 + secs(10.0),
+        });
+        // Recording began 45 s before the first sample, in the loading screen.
+        assert!(close(clock.game_time_at(t0 - secs(45.0)).unwrap(), -40.0));
+        assert!(close(clock.game_time_at(t0 + secs(12.5)).unwrap(), 17.5));
+        let wall = clock.wall_at(17.5).unwrap();
+        assert!(close(clock.game_time_at(wall).unwrap(), 17.5));
     }
 
     #[test]

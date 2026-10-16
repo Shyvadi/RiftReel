@@ -20,6 +20,14 @@
 //! downplayed-dev eog
 //!     Read the League client's end-of-game stats for the last match and print what
 //!     Downplayed takes from them (result, K/D/A, length). Compare with the EOG screen.
+//! downplayed-dev probe [--force]
+//!     Find ffmpeg, run the encoder probe the app uses (NVENC → AMF → QSV → CPU; the
+//!     stored answer unless --force) and list the monitors capture can record.
+//! downplayed-dev capture [seconds] [out-dir] [--stop-on-game]
+//!     Record like the app does for a match (the monitor League's game window is on,
+//!     else the primary one) for <seconds> (default 10), then print the file, frame
+//!     counts and dropped/duplicated frames. <out-dir> defaults to `capture-test` in
+//!     Downplayed's data folder. --stop-on-game ends it early if a League game starts.
 //! ```
 //!
 //! `--extras` enables the Voidgrubs/first blood/ace/shutdown/spree markers; `--team` also
@@ -28,14 +36,18 @@
 
 use std::path::PathBuf;
 use std::process::ExitCode;
-use std::time::Instant;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use downplayed_lib::capture::controller::CaptureTimings;
+use downplayed_lib::capture::{
+    display, ffmpeg, probe, CaptureController, CaptureState, StartRequest,
+};
 use downplayed_lib::league::client::{self, LcuClient};
 use downplayed_lib::league::live::{LiveClient, EVENT_POLL_INTERVAL};
 use downplayed_lib::logging;
 use downplayed_lib::recorder::{self, RecorderTimings};
 use downplayed_lib::replay::{self, clock, render_text, Fixture, LcuRecording};
-use downplayed_lib::settings::AppPaths;
+use downplayed_lib::settings::{AppPaths, Settings};
 use downplayed_lib::tracker::machine::EndReason;
 use downplayed_lib::tracker::normalize::{MarkerChange, MarkerConfig};
 use downplayed_lib::tracker::session::{MatchSession, SessionConfig};
@@ -45,13 +57,17 @@ const USAGE: &str = "usage:
   downplayed-dev record [out-dir]
   downplayed-dev lcu
   downplayed-dev live [--extras] [--team]
-  downplayed-dev eog";
+  downplayed-dev eog
+  downplayed-dev probe [--force]
+  downplayed-dev capture [seconds] [out-dir] [--stop-on-game]";
 
 #[derive(Default)]
 struct Flags {
     extras: bool,
     team: bool,
     json: bool,
+    force: bool,
+    stop_on_game: bool,
     positional: Vec<String>,
 }
 
@@ -63,6 +79,8 @@ impl Flags {
                 "--extras" => flags.extras = true,
                 "--team" => flags.team = true,
                 "--json" => flags.json = true,
+                "--force" => flags.force = true,
+                "--stop-on-game" => flags.stop_on_game = true,
                 other if other.starts_with("--") => return Err(format!("unknown flag {other}")),
                 other => flags.positional.push(other.to_owned()),
             }
@@ -100,6 +118,8 @@ async fn main() -> ExitCode {
             "lcu" => run_lcu().await,
             "live" => run_live(&flags).await,
             "eog" => run_eog().await,
+            "probe" => run_probe(&flags).await,
+            "capture" => run_capture(&flags).await,
             "help" | "-h" | "--help" => {
                 println!("{USAGE}");
                 Ok(())
@@ -353,4 +373,153 @@ async fn run_live(flags: &Flags) -> Result<(), String> {
             return Ok(());
         }
     }
+}
+
+/// The user's settings as the app reads them (defaults if there is no file).
+fn load_settings(paths: &AppPaths) -> Settings {
+    let mut settings = Settings::load(&paths.settings_file).unwrap_or_default();
+    for warning in settings.validate() {
+        eprintln!("settings: {warning}");
+    }
+    settings
+}
+
+async fn run_probe(flags: &Flags) -> Result<(), String> {
+    let paths = AppPaths::resolve();
+    let config = load_settings(&paths).capture_config(&paths);
+    let ffmpeg = ffmpeg::locate(config.ffmpeg.as_deref())
+        .ok_or("ffmpeg not found: run tools/fetch-ffmpeg.ps1 or set [capture] ffmpeg_path")?;
+    println!("ffmpeg {}", ffmpeg.display());
+    let result = probe::cached_or_probe(&ffmpeg, &config.probe_file, flags.force)
+        .await
+        .map_err(|e| e.to_string())?;
+    println!("version {}", result.version.as_deref().unwrap_or("?"));
+    println!("ddagrab {}", if result.ddagrab { "yes" } else { "missing" });
+    match &result.encoder {
+        Some(encoder) if result.is_software() => {
+            println!("encoder {encoder} (on the CPU: no hardware encoder works here)")
+        }
+        Some(encoder) => println!("encoder {encoder}"),
+        None => println!("encoder none: capture can't work with this ffmpeg"),
+    }
+    for rejected in &result.rejected {
+        println!("  skipped {}: {}", rejected.encoder, rejected.reason);
+    }
+    println!(
+        "stored in {}{}",
+        config.probe_file.display(),
+        if flags.force {
+            ""
+        } else {
+            " (--force probes again)"
+        }
+    );
+    for monitor in display::displays() {
+        println!(
+            "monitor {} {}x{} on {} (adapter {}, output {})",
+            monitor.device_name,
+            monitor.width,
+            monitor.height,
+            monitor.adapter_name,
+            monitor.adapter,
+            monitor.output
+        );
+    }
+    match display::game_display() {
+        Some(monitor) => println!("League's game window is on {}", monitor.device_name),
+        None => println!("League's game window isn't open"),
+    }
+    Ok(())
+}
+
+async fn run_capture(flags: &Flags) -> Result<(), String> {
+    let seconds: u64 = match flags.positional.first() {
+        Some(text) => text
+            .parse()
+            .map_err(|_| format!("not a number of seconds: {text}"))?,
+        None => 10,
+    };
+    let paths = AppPaths::resolve();
+    let out = flags
+        .positional
+        .get(1)
+        .map(PathBuf::from)
+        .unwrap_or_else(|| paths.recordings_dir.with_file_name("capture-test"));
+    let mut config = load_settings(&paths).capture_config(&paths);
+    config.enabled = true;
+    config.matches_dir = out.clone();
+    let mut capture = CaptureController::with_ffmpeg(config).with_timings(CaptureTimings {
+        // No game window to wait for when testing on the desktop.
+        window_wait: Duration::from_secs(2),
+        ..CaptureTimings::default()
+    });
+    let started_wall_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
+        .unwrap_or_default();
+    let mut status = capture.status();
+    capture.start(StartRequest {
+        started_wall_ms,
+        queue: Some("capture-test".into()),
+    });
+    println!("recording for {seconds} s into {}", out.display());
+    let began = Instant::now();
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(seconds);
+    let mut game_check = tokio::time::interval(Duration::from_secs(2));
+    loop {
+        tokio::select! {
+            _ = tokio::time::sleep_until(deadline) => break,
+            changed = status.changed() => {
+                if changed.is_err() {
+                    break;
+                }
+                let now = status.borrow_and_update().clone();
+                println!(
+                    "[{:>7.1}s] {:?}{}{}",
+                    began.elapsed().as_secs_f64(),
+                    now.state,
+                    now.encoder.map(|e| format!(" · {e}")).unwrap_or_default(),
+                    now.error.map(|e| format!(" · {e}")).unwrap_or_default()
+                );
+                if now.state == CaptureState::Failed {
+                    break;
+                }
+            }
+            _ = game_check.tick(), if flags.stop_on_game => {
+                let game = tokio::task::spawn_blocking(|| client::scan_processes().game_running)
+                    .await
+                    .unwrap_or(false);
+                if game {
+                    println!("a League game started; stopping");
+                    break;
+                }
+            }
+        }
+    }
+    let Some(recording) = capture.finish(true).await else {
+        return Err("nothing was recorded".into());
+    };
+    let info = &recording.info;
+    let file = info.folder.join(&info.file);
+    let size = std::fs::metadata(&file)
+        .map(|m| m.len())
+        .unwrap_or_default();
+    let recorded_s = info.end_wall_ms.saturating_sub(info.start_wall_ms) as f64 / 1000.0;
+    println!("saved {} ({:.1} MB)", file.display(), size as f64 / 1e6);
+    println!(
+        "{}x{} at {} fps · {} · {} kbps",
+        info.width, info.height, info.fps, info.encoder, info.bitrate_kbps
+    );
+    println!(
+        "frames {} over {:.1} s ({:.2} fps) · dropped {} · duplicated {}",
+        info.frames,
+        recorded_s,
+        info.frames as f64 / recorded_s.max(0.001),
+        info.dropped_frames,
+        info.duplicated_frames
+    );
+    if let Some(error) = &info.error {
+        println!("ended early: {error}");
+    }
+    Ok(())
 }

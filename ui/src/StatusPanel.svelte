@@ -42,10 +42,32 @@
         return { state: 'ok', title: 'Ready', detail: 'your next game will be tracked and reviewed here' };
     }
   });
+
+  const capture = $derived.by(() => {
+    const status = tracker.capture;
+    const encoder = status?.encoder ? `with ${status.encoder}` : '';
+    switch (status?.state) {
+      case undefined:
+      case null:
+        return null;
+      case 'off':
+        return { state: 'warn', title: 'Recording is off', detail: '[capture] enabled = false in the settings' };
+      case 'starting':
+        return { state: 'busy', title: 'Getting ready to record', detail: 'waiting for the game window' };
+      case 'recording':
+        return { state: 'busy', title: 'Recording', detail: encoder };
+      case 'saving':
+        return { state: 'busy', title: 'Saving the video', detail: '' };
+      case 'failed':
+        return { state: 'bad', title: 'Recording failed', detail: status.error ?? '' };
+      default:
+        return { state: 'ok', title: 'Recorder ready', detail: 'games are recorded to the library' };
+    }
+  });
 </script>
 
 <section class="status card" aria-label="Status">
-  {#each [client, game] as row (row.title)}
+  {#each [client, game, capture].filter(Boolean) as row (row.title)}
     <div class="row">
       <span class="mark {row.state}" aria-hidden="true">{marks[row.state]}</span>
       <span class="title">{row.title}</span>

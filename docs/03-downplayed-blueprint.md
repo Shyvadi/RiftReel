@@ -204,7 +204,12 @@ offset across API hiccups.
 - **Defaults** match the user's Outplayed settings: 2560×1440 @ 60 fps, ~10 Mbps.
   Offer presets. Keyframe every 1 s (`-g 60`) so stream-copy cuts land within 1 s.
 - **Full-match mode:** fragmented MP4 (`-movflags +frag_keyframe+empty_moov+default_base_moof`)
-  so a crash never loses the file. On stop, optionally remux to a regular MP4 (`-c copy`).
+  so a crash never loses the file. On stop, remux to a regular MP4 (`-c copy`, one
+  sequential copy): a player has to walk every fragment of a fragmented file before it
+  knows its length. Measured on a 30-minute 10 Mbps file in Chromium through Tauri's
+  asset protocol (at most 1000 KiB per ranged read): opening the fragmented file took
+  8.9 s, 1802 requests and 1.76 GB read; the remuxed file 22 ms, 2 requests and 1.4 MB.
+  The remux took 2 s with a 37 MB peak.
 - **Highlights/manual mode:** a disk ring buffer of 2 s MPEG-TS segments
   (`-f segment -segment_time 2 -segment_wrap N`). Saving concatenates the needed
   segments with `-c copy`. RAM stays flat regardless of buffer length, unlike an
@@ -273,7 +278,7 @@ Folder per match (portable, rebuildable):
   "riot": { "gameId": 0, "platformId": "NA1", "queueId": 420, "gameMode": "CLASSIC", "patch": "" },
   "player": { "championName": "", "team": "ORDER|CHAOS" },
   "result": { "win": true, "kills": 0, "deaths": 0, "assists": 0, "durationS": 0 },
-  "recording": { "startWallMs": 0, "endWallMs": 0, "file": "match.mp4", "encoder": "hevc_nvenc", "width": 2560, "height": 1440, "fps": 60 },
+  "recording": { "file": "match.mp4", "startWallMs": 0, "endWallMs": 0, "gameTimeAtStartS": -40.2, "encoder": "h264_nvenc", "width": 2560, "height": 1440, "fps": 60, "bitrateKbps": 10000, "frames": 0, "droppedFrames": 0, "duplicatedFrames": 0 },
   "markers": [ { "id": 1, "type": "kill", "label": "double_kill", "gameTimeS": 0, "videoTimeS": 0, "preS": 12, "postS": 8, "riotEventIds": [12, 13] } ],
   "clips": [ { "file": "clips/0001_double_kill.mp4", "fromS": 0, "toS": 0, "favorite": false } ],
   "favorite": false

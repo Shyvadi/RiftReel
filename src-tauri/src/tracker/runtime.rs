@@ -1,5 +1,6 @@
 //! Async orchestration. League client and process signals drive the state machine;
-//! during a match, a [`MatchSession`] is fed from the Live Client Data API.
+//! during a match, a [`MatchSession`] is fed from the Live Client Data API and, when
+//! capture is on, a [`CaptureController`] records it.
 //!
 //! [`TrackerRuntime::run`] consumes [`RuntimeEvent`]s. In the app they come from
 //! [`watch_league`] (process scan + LCU WebSocket); tests inject them directly.
@@ -16,6 +17,7 @@ use tokio::time::{self, MissedTickBehavior};
 use super::clock::SAMPLE_INTERVAL;
 use super::machine::{Effect, EndReason, Machine, Signal, TrackerState};
 use super::session::{MatchFilters, MatchProgress, MatchSession, MatchSummary, SessionConfig};
+use crate::capture::{CaptureController, CaptureStatus, StartRequest};
 use crate::league::client::{
     credentials_for, scan_processes, ClientProcess, LcuClient, LcuError, LeagueClient,
     PhaseSubscription,
@@ -40,6 +42,9 @@ pub struct Timings {
     /// How long to wait for the client's end-of-game screen before summarising without
     /// its stats.
     pub finalize_wait: Duration,
+    /// Recording continues this long after Riot's `GameEnd` (the nexus falling), for
+    /// the victory or defeat screen.
+    pub end_screen_tail: Duration,
 }
 
 impl Default for Timings {
@@ -49,6 +54,7 @@ impl Default for Timings {
             clock_sample: SAMPLE_INTERVAL,
             live_probe: Duration::from_secs(1),
             finalize_wait: Duration::from_secs(90),
+            end_screen_tail: Duration::from_secs(3),
         }
     }
 }
@@ -83,6 +89,8 @@ pub struct TrackerStatus {
     pub reconnecting: bool,
     pub current: Option<MatchProgress>,
     pub last_match: Option<MatchSummary>,
+    /// Video capture, when the runtime has a capture controller.
+    pub capture: Option<CaptureStatus>,
 }
 
 pub struct TrackerRuntime {
@@ -100,6 +108,9 @@ pub struct TrackerRuntime {
     status: watch::Sender<TrackerStatus>,
     summaries: Option<mpsc::UnboundedSender<MatchSummary>>,
     last_match: Option<MatchSummary>,
+    capture: Option<CaptureController>,
+    /// The capture controller's latest status, for [`TrackerStatus`].
+    capture_status: Option<CaptureStatus>,
 }
 
 impl TrackerRuntime {
@@ -123,6 +134,8 @@ impl TrackerRuntime {
             status,
             summaries: None,
             last_match: None,
+            capture: None,
+            capture_status: None,
         }
     }
 
@@ -132,11 +145,19 @@ impl TrackerRuntime {
         self
     }
 
+    /// Record each tracked match with this controller.
+    pub fn with_capture(mut self, capture: CaptureController) -> Self {
+        self.capture_status = Some(capture.status().borrow().clone());
+        self.capture = Some(capture);
+        self
+    }
+
     /// Runs until the event channel closes.
     pub async fn run(mut self, mut events: mpsc::Receiver<RuntimeEvent>) {
         let mut poll = ticker(self.timings.event_poll);
         let mut clock = ticker(self.timings.clock_sample);
         let mut probe = ticker(self.timings.live_probe);
+        let mut capture_status = self.capture.as_ref().map(CaptureController::status);
         self.publish();
         loop {
             let deadline = self.finalize_deadline;
@@ -152,10 +173,12 @@ impl TrackerRuntime {
                     tracing::debug!("no end-of-game screen in time; summarising without it");
                     self.complete_finalize().await;
                 }
+                status = next_status(&mut capture_status) => self.capture_status = Some(status),
             }
             while let Some(signal) = self.pending.pop_front() {
                 self.signal(signal).await;
             }
+            self.sync_capture();
             self.publish();
         }
         tracing::debug!("tracker runtime stopped");
@@ -226,7 +249,9 @@ impl TrackerRuntime {
         for effect in effects {
             match effect {
                 Effect::PrewarmCapture => {
-                    tracing::debug!("capture prewarm requested (capture arrives in phase 2)")
+                    if let Some(capture) = &self.capture {
+                        capture.prewarm();
+                    }
                 }
                 Effect::StartMatch => self.start_match().await,
                 Effect::ResumeMatch => {
@@ -243,6 +268,36 @@ impl TrackerRuntime {
         self.last_live_error = None;
         self.attach_lcu_session().await;
         self.poll().await;
+        self.start_capture();
+    }
+
+    /// Starts recording the new match unless it is already known not to be tracked.
+    /// The controller waits for League's window itself.
+    fn start_capture(&mut self) {
+        let (Some(capture), Some(session)) = (self.capture.as_mut(), self.session.as_ref()) else {
+            return;
+        };
+        if !session.is_tracking() {
+            return;
+        }
+        let started = capture.start(StartRequest {
+            started_wall_ms: session.started_wall_ms(),
+            queue: session.queue().map(str::to_owned),
+        });
+        if !started && capture.is_enabled() {
+            tracing::debug!("a recording is still running; not starting another");
+        }
+    }
+
+    /// A match found not to be tracked after all (filtered mode, spectating) isn't
+    /// recorded either.
+    fn sync_capture(&mut self) {
+        let (Some(capture), Some(session)) = (self.capture.as_mut(), self.session.as_ref()) else {
+            return;
+        };
+        if !session.is_tracking() && capture.discard() {
+            tracing::debug!("match not tracked; dropping its recording");
+        }
     }
 
     /// Adds the client's gameflow session (queue, mode, game ID) to the current match
@@ -336,6 +391,15 @@ impl TrackerRuntime {
 
     async fn begin_finalize(&mut self, reason: EndReason) {
         self.end_reason = Some(reason);
+        if let Some(capture) = self.capture.as_mut() {
+            // GameEnd arrives as the nexus falls: keep its end screen.
+            let tail = if reason == EndReason::GameEnd {
+                self.timings.end_screen_tail
+            } else {
+                Duration::ZERO
+            };
+            capture.stop(tail);
+        }
         let tracked = self
             .session
             .as_ref()
@@ -402,8 +466,17 @@ impl TrackerRuntime {
         if tracked {
             self.fetch_eog().await;
         }
-        if let Some(session) = self.session.take() {
+        // The video is finished first: marker times count from its first frame. A match
+        // with no summary keeps no video.
+        let recording = match self.capture.as_mut() {
+            Some(capture) => capture.finish(tracked).await,
+            None => None,
+        };
+        if let Some(mut session) = self.session.take() {
             if tracked {
+                if let Some(recording) = recording {
+                    session.set_recording(recording);
+                }
                 let summary = session.summary(reason);
                 tracing::info!(
                     result = ?summary.result,
@@ -432,6 +505,7 @@ impl TrackerRuntime {
             reconnecting: self.machine.is_reconnecting(),
             current: self.session.as_ref().map(MatchSession::progress),
             last_match: self.last_match.clone(),
+            capture: self.capture_status.clone(),
         };
         self.status.send_if_modified(|current| {
             if *current == status {
@@ -479,6 +553,16 @@ async fn bootstrap(
         "tracking match"
     );
     Ok(())
+}
+
+/// The capture controller's next status; never resolves without a controller.
+async fn next_status(status: &mut Option<watch::Receiver<CaptureStatus>>) -> CaptureStatus {
+    if let Some(receiver) = status {
+        if receiver.changed().await.is_ok() {
+            return receiver.borrow_and_update().clone();
+        }
+    }
+    std::future::pending().await
 }
 
 fn ticker(period: Duration) -> time::Interval {
