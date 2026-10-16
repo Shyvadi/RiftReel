@@ -1,8 +1,10 @@
-//! The tray application. It starts with no window and opens one on demand, which is
-//! destroyed when closed. The tracker runs in the background the whole time and records
-//! each match; each match it finishes is saved to the library and, by default, opened
-//! for review once the game has closed. The cleanup, when the user has turned it on,
-//! runs after each match and every hour, never during a game.
+//! The tray application. Opening it opens its window (`--tray`: only the tray icon); the
+//! window is destroyed when closed and Downplayed stays in the tray, and opening it again
+//! brings the window back rather than starting a second Downplayed. The tracker runs in
+//! the background the whole time and records each match; each match it finishes is saved
+//! to the library and, by default, opened for review once the game has closed. The
+//! cleanup, when the user has turned it on, runs after each match and every hour, never
+//! during a game.
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, PoisonError};
@@ -45,9 +47,14 @@ const CLEANUP_EVERY: Duration = Duration::from_secs(60 * 60);
 /// While the cleanup runs, how often it checks that no game has started.
 const CLEANUP_GAME_CHECK: Duration = Duration::from_secs(2);
 
-/// Set to open the window at startup (development; normally only the tray opens it).
-/// `hidden` creates it invisible, for smoke tests.
+/// `hidden` creates the window invisible at startup, for smoke tests (development).
 const OPEN_WINDOW_ENV: &str = "DOWNPLAYED_OPEN_WINDOW";
+/// Starts with the tray icon only, no window (say, a start with Windows).
+const TRAY_ARG: &str = "--tray";
+/// The app id (`identifier` in tauri.conf.json) an installed copy runs under: its Start
+/// menu shortcut carries it.
+#[cfg(windows)]
+const APP_ID: &str = "app.downplayed.desktop";
 
 struct AppState {
     status: watch::Receiver<TrackerStatus>,
@@ -660,6 +667,8 @@ pub fn run() {
     for warning in &loaded.warnings {
         tracing::warn!("{warning}");
     }
+    #[cfg(windows)]
+    set_app_id();
     let settings_writable = !matches!(loaded.outcome, LoadOutcome::Invalid(_));
     let settings = loaded.settings;
     if settings.storage.cleanup {
@@ -679,7 +688,18 @@ pub fn run() {
     let ffmpeg = ffmpeg::locate(capture.ffmpeg.as_deref());
 
     let (status_tx, status_rx) = watch::channel(TrackerStatus::default());
-    let app = tauri::Builder::default()
+    let mut builder = tauri::Builder::default();
+    // One Downplayed at a time: opening it again brings up the running one's window
+    // (not for a `--tray` start) instead of a second tracker recording the same games.
+    // A development home runs on its own, beside the real one.
+    if AppPaths::development_home().is_none() {
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            if !args.iter().any(|arg| arg == TRAY_ARG) {
+                tray::show_main_window(app);
+            }
+        }));
+    }
+    let app = builder
         .plugin(tauri_plugin_notification::init())
         .manage(AppState {
             status: status_rx.clone(),
@@ -753,8 +773,13 @@ pub fn run() {
                 status_rx,
             );
             tauri::async_runtime::spawn(janitor(app.handle().clone()));
-            if let Some(value) = std::env::var_os(OPEN_WINDOW_ENV) {
-                tray::create_main_window(app.handle(), value != "hidden");
+            // Opened from the taskbar, Start or Explorer: the window opens.
+            match std::env::var_os(OPEN_WINDOW_ENV) {
+                Some(value) => tray::create_main_window(app.handle(), value != "hidden"),
+                None if !std::env::args().any(|arg| arg == TRAY_ARG) => {
+                    tray::show_main_window(app.handle())
+                }
+                None => {}
             }
             Ok(())
         })
@@ -832,6 +857,31 @@ fn start_tracker(
             }
         }
     });
+}
+
+/// An installed copy runs under its Start menu shortcut's app id, so the pinned taskbar
+/// button and the window are one, and Windows notifications reach the user (the
+/// notification plugin uses that id outside cargo's `target\debug` and
+/// `target\release`). A build run from there keeps Windows' default.
+#[cfg(windows)]
+fn set_app_id() {
+    use windows::core::HSTRING;
+    use windows::Win32::UI::Shell::SetCurrentProcessExplicitAppUserModelID;
+
+    let built_here = std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(|dir| dir.to_path_buf()))
+        .is_none_or(|dir| {
+            dir.ends_with(std::path::Path::new("target").join("debug"))
+                || dir.ends_with(std::path::Path::new("target").join("release"))
+        });
+    if built_here {
+        return;
+    }
+    // SAFETY: a valid string, set before any window exists.
+    if let Err(error) = unsafe { SetCurrentProcessExplicitAppUserModelID(&HSTRING::from(APP_ID)) } {
+        tracing::warn!(%error, "could not set the app id");
+    }
 }
 
 /// Whether `League of Legends.exe` is running (a game is being played).
@@ -1030,4 +1080,14 @@ fn now_ms() -> i64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
         .unwrap_or_default()
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    #[test]
+    fn the_app_id_is_the_configured_identifier() {
+        let config: serde_json::Value =
+            serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+        assert_eq!(config["identifier"], super::APP_ID);
+    }
 }

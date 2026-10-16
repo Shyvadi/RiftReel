@@ -630,13 +630,23 @@ pub struct AppPaths {
     pub capture_probe_file: PathBuf,
 }
 
+/// Names one folder for settings, logs, matches and recordings (development, tests).
+pub const HOME_ENV: &str = "DOWNPLAYED_HOME";
+
 impl AppPaths {
+    /// The folder `DOWNPLAYED_HOME` names, if it is set.
+    pub fn development_home() -> Option<PathBuf> {
+        std::env::var_os(HOME_ENV)
+            .filter(|home| !home.is_empty())
+            .map(PathBuf::from)
+    }
+
     /// `%APPDATA%\Downplayed\settings.toml`; logs, matches and recordings under
     /// `%LOCALAPPDATA%\Downplayed`. `DOWNPLAYED_HOME` puts everything under one folder
     /// instead (development).
     pub fn resolve() -> Self {
-        if let Some(home) = std::env::var_os("DOWNPLAYED_HOME").filter(|h| !h.is_empty()) {
-            return Self::under(PathBuf::from(home));
+        if let Some(home) = Self::development_home() {
+            return Self::under(home);
         }
         let fallback = || PathBuf::from(".");
         let config_dir = dirs::config_dir()

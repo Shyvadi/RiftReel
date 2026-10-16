@@ -60,13 +60,25 @@ and `cargo test` don't need the binary):
 cargo tauri build --config src-tauri/tauri.bundle.json
 ```
 
+For everyday use, `tools/install-local.ps1` builds a release (its UI inside) and installs
+it for this Windows user in `%LOCALAPPDATA%\Programs\Downplayed`, with ffmpeg beside it
+and a **Downplayed** Start menu shortcut to pin to the taskbar. Run it again after
+changes: a running Downplayed keeps going, and the next start (after **Quit** from the
+tray) is the new build.
+
+```bash
+powershell -ExecutionPolicy Bypass -File tools/install-local.ps1
+```
+
 ```bash
 cargo test
 ```
 
 Run `cargo tauri dev` from the repository root. It starts the Vite dev server in `ui/` and
-the app, which lives in the system tray. Left-click the tray icon (or use **Open
-Downplayed**) for the window. Closing the window destroys it; **Quit** exits.
+the app, which opens its window. Closing the window destroys it and leaves Downplayed in
+the system tray: left-click the tray icon (or use **Open Downplayed**) for the window
+again; **Quit** exits. Opening Downplayed while it runs brings up its window rather than
+starting a second one, and `--tray` starts it with the tray icon only.
 
 ```bash
 cargo tauri dev
@@ -110,9 +122,10 @@ times the library index (rebuilt from scratch with `--cold`) and a few list quer
 | Imports | `%LOCALAPPDATA%\Downplayed\library\imports.json`: the Outplayed folders imported, and whether the cleanup may remove their videos. Each imported video gets a folder `<date>_<time>_Outplayed[_<champion>]` whose `match.json` points at it |
 | Encoder probe | `%LOCALAPPDATA%\Downplayed\capture-probe.json`: which encoder works here, probed once per ffmpeg binary |
 | Recordings | `%LOCALAPPDATA%\Downplayed\recordings`, where `downplayed-dev record` saves by default |
-| `DOWNPLAYED_HOME` | Put settings, logs, matches and recordings under one folder instead (development) |
+| `DOWNPLAYED_HOME` | Put settings, logs, matches and recordings under one folder instead (development); such a Downplayed runs beside the real one |
+| Installed app | `%LOCALAPPDATA%\Programs\Downplayed` (`tools/install-local.ps1`), and the Start menu shortcut **Downplayed** |
 | `DOWNPLAYED_LOG` | Override the log level, e.g. `debug` |
-| `DOWNPLAYED_OPEN_WINDOW` | Open the window at startup (`hidden`: create it invisible, for smoke tests) |
+| `DOWNPLAYED_OPEN_WINDOW` | `hidden`: create the window invisible at startup (smoke tests) |
 
 Capture settings live in `[capture]`: `enabled`, `fps` (60), `bitrate_mbps` (10),
 `encoder` (`auto`, or e.g. `h264_nvenc`) and `ffmpeg_path` (empty: the bundled ffmpeg).
