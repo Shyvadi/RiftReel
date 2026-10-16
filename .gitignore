@@ -13,3 +13,6 @@
 
 # ffmpeg from tools/fetch-ffmpeg.ps1 (never committed)
 /src-tauri/binaries/
+
+# Not published: the Outplayed reverse-engineering report and its evidence
+/docs/private/

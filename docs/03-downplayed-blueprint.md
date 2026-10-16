@@ -5,8 +5,8 @@ It reproduces what Outplayed's LoL tracker does for the player (auto-detect matc
 record, mark kills/deaths/objectives, cut highlights, manage storage) without Overwolf,
 ads, telemetry, remotely loaded code or a stack of Chromium windows.
 
-This blueprint is derived from the REA investigation in
-[01-outplayed-rea-findings.md](01-outplayed-rea-findings.md) and the tracker spec in
+This blueprint is derived from a reverse-engineering (REA) investigation of Outplayed
+("doc 01", not published) and the tracker spec in
 [02-lol-tracker-spec.md](02-lol-tracker-spec.md). It is a *functional* spec: build from
 these behaviors and from Riot's public interfaces, not from Outplayed's code or assets
 (see [Clean-room rules](#11-clean-room-and-licensing-rules)).

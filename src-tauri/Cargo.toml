@@ -4,6 +4,8 @@ version = "0.1.0"
 description = "Lightweight, local-first League of Legends clip recorder"
 edition.workspace = true
 rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
 publish = false
 default-run = "downplayed"
 

@@ -30,9 +30,12 @@ changes.
 
 | Doc | What it covers |
 |---|---|
-| [docs/01-outplayed-rea-findings.md](docs/01-outplayed-rea-findings.md) | REA reverse-engineering report. The shortcut → Overwolf → Outplayed identity chain, architecture, plugins, capture engine, ads/telemetry data flows and memory hotspots, with evidence IDs and file:line citations. |
 | [docs/02-lol-tracker-spec.md](docs/02-lol-tracker-spec.md) | How Outplayed's League of Legends tracker works (GEP features, events, highlight timing, match lifecycle) and the equivalent official Riot interfaces Downplayed uses instead. |
 | [docs/03-downplayed-blueprint.md](docs/03-downplayed-blueprint.md) | Architecture, capture design, data model, storage policy, UI, performance budget, clean-room rules and roadmap. |
+
+Docs 02 and 03 cite "doc 01", a reverse-engineering report of Outplayed that this
+repository doesn't publish. Downplayed is built from those functional specs and Riot's
+public interfaces, never from Outplayed's code or assets (blueprint §11).
 
 ## Building
 
@@ -104,11 +107,11 @@ times the library index (rebuilt from scratch with `--cold`) and a few list quer
 `downplayed-dev outplayed D:\Outplayed` what importing an Outplayed library would add
 (`--write` imports it).
 
-> **This machine:** Visual Studio 2022 Community has a partial MSVC 14.42 toolset (no
-> headers). `cc-rs` picks it first, so building `ring` fails with "Cannot open include
-> file: 'vcruntime.h'". Repair VS 2022's *Desktop development with C++* workload, or
-> point builds at the complete VS 2019 toolset:
-> `$env:VCToolsVersion = "14.29.30133"` (PowerShell) or `export VCToolsVersion=14.29.30133`.
+> **Troubleshooting:** if building `ring` fails with "Cannot open include file:
+> 'vcruntime.h'", `cc-rs` picked an incomplete MSVC toolset (for example a partial
+> Visual Studio 2022 install). Repair the *Desktop development with C++* workload, or
+> point the build at a complete toolset, e.g. `$env:VCToolsVersion = "14.29.30133"`
+> (PowerShell) or `export VCToolsVersion=14.29.30133`.
 
 ## Files and environment
 
@@ -180,6 +183,11 @@ tools/fetch-ffmpeg.ps1       pinned LGPL ffmpeg build (URL + SHA-256)
 tools/install-local.ps1      release build installed for this user, Start menu shortcut
 tools/make-icons.py          draws the icon set in src-tauri/icons (Pillow)
 ```
+
+## License
+
+[MIT](LICENSE). The ffmpeg build that `tools/fetch-ffmpeg.ps1` downloads is LGPL and is
+shipped as a separate program next to Downplayed, with its license and source offer.
 
 Downplayed isn't endorsed by Riot Games and doesn't reflect the views or opinions of
 Riot Games or anyone officially involved in producing or managing Riot Games
