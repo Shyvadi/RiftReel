@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use super::ffmpeg::{self, EncoderFamily, Priority};
 
-/// Probe order. x264 is GPL and not in the LGPL build Downplayed ships (it is used if a
+/// Probe order. x264 is GPL and not in the LGPL build RiftReel ships (it is used if a
 /// configured ffmpeg has it); there the CPU fallback is OpenH264.
 pub const CANDIDATES: [&str; 5] = [
     "h264_nvenc",
@@ -363,11 +363,11 @@ mod tests {
 
     #[test]
     fn stored_results_are_reused_only_for_the_same_binary() {
-        let dir = std::env::temp_dir().join(format!("downplayed-probe-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("riftreel-probe-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let cache = dir.join("capture-probe.json");
         let fingerprint = FfmpegFingerprint {
-            path: r"C:\Downplayed\ffmpeg.exe".into(),
+            path: r"C:\RiftReel\ffmpeg.exe".into(),
             size: 134_088_704,
             modified_ms: 1_792_080_720_000,
         };

@@ -1,4 +1,4 @@
-//! Fixture replays (`downplayed-dev replay`) produce the expected markers.
+//! Fixture replays (`riftreel-dev replay`) produce the expected markers.
 //!
 //! The rendered report of every fixture is compared with `fixtures/lol/*.expected.txt`.
 //! After an intended change, regenerate them with `UPDATE_EXPECTED=1 cargo test --test
@@ -7,10 +7,10 @@
 
 mod support;
 
-use downplayed_lib::league::models::EogStatsBlock;
-use downplayed_lib::replay::{render_text, replay_with, LcuRecording, ReplayReport};
-use downplayed_lib::tracker::normalize::{GameResult, Kda, MarkerConfig, MarkerKind, MarkerLabel};
-use downplayed_lib::tracker::session::{ResultSource, SessionConfig};
+use riftreel_lib::league::models::EogStatsBlock;
+use riftreel_lib::replay::{render_text, replay_with, LcuRecording, ReplayReport};
+use riftreel_lib::tracker::normalize::{GameResult, Kda, MarkerConfig, MarkerKind, MarkerLabel};
+use riftreel_lib::tracker::session::{ResultSource, SessionConfig};
 use support::{fixture_path, load_fixture, load_json};
 
 fn config(extras: bool, team: bool) -> SessionConfig {
@@ -217,7 +217,7 @@ fn spectator_fixture_produces_nothing() {
     assert!(report.summary.markers.is_empty());
 }
 
-/// A real ARAM: Mayhem game, recorded with `downplayed-dev record` (pseudonymised). Its
+/// A real ARAM: Mayhem game, recorded with `riftreel-dev record` (pseudonymised). Its
 /// end-of-game block is Riot's actual payload, so this pins the stat names
 /// `EogStatsBlock` reads against what the client sends.
 #[test]
@@ -243,7 +243,7 @@ fn recorded_game_end_of_game_stats_match_the_scoreboard_and_game_end() {
         .players()
         .unwrap()
         .into_iter()
-        .find(|p| p.riot_id.as_deref() == Some("Downplayer#DP1"))
+        .find(|p| p.riot_id.as_deref() == Some("Reeler#RR1"))
         .unwrap();
     assert_eq!(
         (me.scores.kills, me.scores.deaths, me.scores.assists),

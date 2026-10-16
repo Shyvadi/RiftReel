@@ -1,6 +1,6 @@
-"""Draws Downplayed's icon set into src-tauri/icons (original artwork).
+"""Draws RiftReel's icon set into src-tauri/icons (original artwork).
 
-The mark: a bold white "D" whose counter is a play button, on a rounded tile that runs
+The mark: a bold white "R" whose counter is a play button, on a rounded tile that runs
 from teal to blue. At 20 px and under, where the letter would blur, the tile carries
 just the play button, and so does the tray icon (tray.png). Everything is drawn at 4x and scaled down, so edges stay clean.
 
@@ -53,29 +53,37 @@ def rounded_triangle(draw, points, radius, scale):
 
 
 def letter(scale):
-    """The white D with its play-button counter, as an alpha mask."""
+    """The white R with its play-button counter, as an alpha mask."""
     n = SIZE * scale
     s = scale
-    stem_left, top, bottom, centre_x, radius = 275, 263, 761, 492, 249
+    stem_left, stem_right, top, bottom = 275, 410, 263, 761
+    centre_x, radius = 541, 172
+    bowl_bottom = top + 2 * radius
     mask = Image.new("L", (n, n), 0)
     draw = ImageDraw.Draw(mask)
-    # The stem, round on the left only: its right side runs into the bowl.
+    # The stem, round on the left only.
     draw.rounded_rectangle(
-        [stem_left * s, top * s, centre_x * s, bottom * s],
+        [stem_left * s, top * s, stem_right * s, bottom * s],
         radius=49 * s,
         fill=255,
         corners=(True, False, False, True),
     )
-    # The bowl: the right half of a disc.
+    # The leg, from inside the bowl down to the right.
+    leg = [(454, 560), (612, 560), (741, 761), (583, 761)]
+    draw.polygon([(x * s, y * s) for x, y in leg], fill=255)
+    # The bowl: a bar from the stem that ends in the right half of a disc.
     bowl = Image.new("L", (n, n), 0)
     ImageDraw.Draw(bowl).ellipse(
-        [(centre_x - radius) * s, top * s, (centre_x + radius) * s, bottom * s], fill=255
+        [(centre_x - radius) * s, top * s, (centre_x + radius) * s, bowl_bottom * s], fill=255
     )
     ImageDraw.Draw(bowl).rectangle([0, 0, centre_x * s, n], fill=0)
+    ImageDraw.Draw(bowl).rectangle(
+        [stem_right * s, top * s, centre_x * s, bowl_bottom * s], fill=255
+    )
     mask = ImageChops.lighter(mask, bowl)
     # The counter: a play button.
     hole = Image.new("L", (n, n), 0)
-    rounded_triangle(ImageDraw.Draw(hole), [(407, 391), (407, 633), (618, 512)], 25, s)
+    rounded_triangle(ImageDraw.Draw(hole), [(430, 356), (430, 514), (567, 435)], 22, s)
     return ImageChops.subtract(mask, hole)
 
 

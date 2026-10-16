@@ -1,43 +1,43 @@
 //! Developer commands (not part of the app).
 //!
 //! ```text
-//! downplayed-dev replay <fixture.json> [--extras] [--team] [--json]
+//! riftreel-dev replay <fixture.json> [--extras] [--team] [--json]
 //!     Run a Live Client fixture through the tracker and print markers and moments.
 //!     League client files recorded with it (`lcu/<name>.session.json`, `.eog.json`)
 //!     are used too, so the result comes from the end-of-game stats when they exist.
-//! downplayed-dev record [out-dir]
+//! riftreel-dev record [out-dir]
 //!     Wait for the next game and record it as a fixture in <out-dir> (default: the
-//!     `recordings` folder the Downplayed window lists): `<name>.json` plus
+//!     `recordings` folder the RiftReel window lists): `<name>.json` plus
 //!     `lcu/<name>.{session,eog,frames}.json` from the League client. Player names are
-//!     pseudonymised (`Downplayer#DP1` is you). Files are rewritten every few seconds;
+//!     pseudonymised (`Reeler#RR1` is you). Files are rewritten every few seconds;
 //!     it stops by itself after the end-of-game screen.
-//! downplayed-dev lcu
+//! riftreel-dev lcu
 //!     Find the running League client, print its gameflow phase and queue, then
 //!     follow phase changes over its WebSocket (Ctrl+C to stop).
-//! downplayed-dev live [--extras] [--team]
+//! riftreel-dev live [--extras] [--team]
 //!     Poll the real Live Client API (start a Practice Tool game) and print markers
 //!     as they happen.
-//! downplayed-dev eog
+//! riftreel-dev eog
 //!     Read the League client's end-of-game stats for the last match and print what
-//!     Downplayed takes from them (result, K/D/A, length). Compare with the EOG screen.
-//! downplayed-dev probe [--force]
+//!     RiftReel takes from them (result, K/D/A, length). Compare with the EOG screen.
+//! riftreel-dev probe [--force]
 //!     Find ffmpeg, run the encoder probe the app uses (NVENC → AMF → QSV → CPU; the
 //!     stored answer unless --force) and list the monitors capture can record.
-//! downplayed-dev capture [seconds] [out-dir] [--stop-on-game]
+//! riftreel-dev capture [seconds] [out-dir] [--stop-on-game]
 //!     Record like the app does for a match (the monitor League's game window is on,
 //!     else the primary one) for <seconds> (default 10), then print the file, frame
 //!     counts and dropped/duplicated frames. <out-dir> defaults to `capture-test` in
-//!     Downplayed's data folder. --stop-on-game ends it early if a League game starts.
+//!     RiftReel's data folder. --stop-on-game ends it early if a League game starts.
 //!     The sound comes from `[capture.audio]` in the settings.
-//! downplayed-dev audio
+//! riftreel-dev audio
 //!     List the audio output and input devices (what `[capture.audio]` device names
 //!     match against). Nothing is recorded.
-//! downplayed-dev library [--cold]
+//! riftreel-dev library [--cold]
 //!     Time the library index (rebuilt from scratch with --cold) and a few list queries.
-//! downplayed-dev cleanup
+//! riftreel-dev cleanup
 //!     The cleanup's dry run under the settings' `[storage]` limits: each full-match
 //!     video it would send to the Recycle Bin, and the space freed. Changes nothing.
-//! downplayed-dev outplayed <outplayed-folder> [--write]
+//! riftreel-dev outplayed <outplayed-folder> [--write]
 //!     What importing an Outplayed library would add: its League videos, those joined to
 //!     a record of its localStorage backup, the markers recovered, the results known.
 //!     Reads only, unless --write: then it imports them, by reference, into the library.
@@ -45,41 +45,41 @@
 //! ```
 //!
 //! `--extras` enables the Voidgrubs/first blood/ace/shutdown/spree markers; `--team` also
-//! marks your team's objectives. Set `DOWNPLAYED_LOG=debug` for (scrubbed) diagnostics
+//! marks your team's objectives. Set `RIFTREEL_LOG=debug` for (scrubbed) diagnostics
 //! on stderr.
 
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use downplayed_lib::capture::controller::CaptureTimings;
-use downplayed_lib::capture::{
+use riftreel_lib::capture::controller::CaptureTimings;
+use riftreel_lib::capture::{
     display, ffmpeg, probe, wasapi, CaptureController, CaptureState, StartRequest,
 };
-use downplayed_lib::disk;
-use downplayed_lib::league::client::{self, LcuClient};
-use downplayed_lib::league::live::{LiveClient, EVENT_POLL_INTERVAL};
-use downplayed_lib::library::{self, Library, MatchQuery, Sort};
-use downplayed_lib::logging;
-use downplayed_lib::recorder::{self, RecorderTimings};
-use downplayed_lib::replay::{self, clock, render_text, Fixture, LcuRecording};
-use downplayed_lib::settings::{AppPaths, Settings};
-use downplayed_lib::tracker::machine::EndReason;
-use downplayed_lib::tracker::normalize::{MarkerChange, MarkerConfig};
-use downplayed_lib::tracker::session::{MatchSession, SessionConfig};
+use riftreel_lib::disk;
+use riftreel_lib::league::client::{self, LcuClient};
+use riftreel_lib::league::live::{LiveClient, EVENT_POLL_INTERVAL};
+use riftreel_lib::library::{self, Library, MatchQuery, Sort};
+use riftreel_lib::logging;
+use riftreel_lib::recorder::{self, RecorderTimings};
+use riftreel_lib::replay::{self, clock, render_text, Fixture, LcuRecording};
+use riftreel_lib::settings::{AppPaths, Settings};
+use riftreel_lib::tracker::machine::EndReason;
+use riftreel_lib::tracker::normalize::{MarkerChange, MarkerConfig};
+use riftreel_lib::tracker::session::{MatchSession, SessionConfig};
 
 const USAGE: &str = "usage:
-  downplayed-dev replay <fixture.json> [--extras] [--team] [--json]
-  downplayed-dev record [out-dir]
-  downplayed-dev lcu
-  downplayed-dev live [--extras] [--team]
-  downplayed-dev eog
-  downplayed-dev probe [--force]
-  downplayed-dev capture [seconds] [out-dir] [--stop-on-game]
-  downplayed-dev audio
-  downplayed-dev library [--cold]
-  downplayed-dev cleanup
-  downplayed-dev outplayed <outplayed-folder> [--write]";
+  riftreel-dev replay <fixture.json> [--extras] [--team] [--json]
+  riftreel-dev record [out-dir]
+  riftreel-dev lcu
+  riftreel-dev live [--extras] [--team]
+  riftreel-dev eog
+  riftreel-dev probe [--force]
+  riftreel-dev capture [seconds] [out-dir] [--stop-on-game]
+  riftreel-dev audio
+  riftreel-dev library [--cold]
+  riftreel-dev cleanup
+  riftreel-dev outplayed <outplayed-folder> [--write]";
 
 #[derive(Default)]
 struct Flags {
@@ -226,7 +226,7 @@ async fn run_record(flags: &Flags) -> Result<(), String> {
         );
     }
     println!(
-        "replay: cargo run --bin downplayed-dev -- replay {}",
+        "replay: cargo run --bin riftreel-dev -- replay {}",
         recorded.fixture.display()
     );
     Ok(())
@@ -404,7 +404,7 @@ async fn run_live(flags: &Flags) -> Result<(), String> {
 }
 
 /// The user's settings as the app reads them (defaults if there is no file).
-/// Indexes the library (`DOWNPLAYED_HOME`, or the real one) and times it: the sync, then
+/// Indexes the library (`RIFTREEL_HOME`, or the real one) and times it: the sync, then
 /// a few list queries. `--cold` deletes the index first (it's a cache of the folders).
 fn run_library(flags: &Flags) -> Result<(), String> {
     let paths = AppPaths::resolve();

@@ -6,11 +6,11 @@ mod support;
 
 use std::time::Duration;
 
-use downplayed_lib::league::client::{
+use riftreel_lib::league::client::{
     parse_phase_event, CredentialSource, LcuClient, LcuCredentials, LcuError,
 };
-use downplayed_lib::league::models::GameflowPhase as P;
-use downplayed_lib::tracker::machine::{Effect, EndReason, Machine, Signal, TrackerState};
+use riftreel_lib::league::models::GameflowPhase as P;
+use riftreel_lib::tracker::machine::{Effect, EndReason, Machine, Signal, TrackerState};
 use support::{load_json, FakeLcuServer, TestPki};
 
 const PASSWORD: &str = "Zx9-test-password_Q";

@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Downplayed",
+  "productName": "RiftReel",
   "version": "0.1.0",
-  "identifier": "app.downplayed.desktop",
+  "identifier": "app.riftreel.desktop",
   "build": {
     "devUrl": "http://localhost:1420",
     "frontendDist": "../ui/dist",

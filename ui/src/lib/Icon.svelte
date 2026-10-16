@@ -1,5 +1,5 @@
 <script>
-  /** Line icons on a 24-unit grid, drawn for Downplayed. */
+  /** Line icons on a 24-unit grid, drawn for RiftReel. */
   let { name, size = 20 } = $props();
 </script>
 

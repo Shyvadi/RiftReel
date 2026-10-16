@@ -1,10 +1,10 @@
-// Never a console window, debug builds included: Downplayed lives in the tray.
+// Never a console window, debug builds included: RiftReel lives in the tray.
 #![windows_subsystem = "windows"]
 
 fn main() {
     #[cfg(all(windows, debug_assertions))]
     attach_parent_console();
-    downplayed_lib::run();
+    riftreel_lib::run();
 }
 
 /// A debug build started from a terminal prints its logs there; started any other way

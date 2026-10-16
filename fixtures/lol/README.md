@@ -1,18 +1,18 @@
 # League fixtures
 
 Data in the shapes Riot's local APIs return. All player names are invented or
-pseudonymised (`Downplayer#DP1` is always the local player). The synthetic fixtures are
-hand-written; `downplayed-dev record` (doc 02 §B5.1) records real games in the same
+pseudonymised (`Reeler#RR1` is always the local player). The synthetic fixtures are
+hand-written; `riftreel-dev record` (doc 02 §B5.1) records real games in the same
 format.
 
 ## Recording a match
 
 ```
-cargo run --bin downplayed-dev -- record [out-dir]
+cargo run --bin riftreel-dev -- record [out-dir]
 ```
 
-Without `out-dir` it saves to `%LOCALAPPDATA%\Downplayed\recordings`, which the
-Downplayed window lists next to tracked matches. Start it before or during a game
+Without `out-dir` it saves to `%LOCALAPPDATA%\RiftReel\recordings`, which the
+RiftReel window lists next to tracked matches. Start it before or during a game
 (Practice Tool works). It waits for the Live Client API,
 records until the game closes, then waits up to 3 minutes for the League client's
 end-of-game stats and exits after the end-of-game screen. It writes:
@@ -26,7 +26,7 @@ end-of-game stats and exits after the end-of-game screen. It writes:
 
 The files are rewritten every few seconds, so stopping the recorder early keeps what it
 had. Raw payloads stay in memory; what's written is pseudonymised consistently across all
-files: you become `Downplayer#DP1`, everyone else `Player1#DP1`, `Player2#DP1`, … in
+files: you become `Reeler#RR1`, everyone else `Player1#RR1`, `Player2#RR1`, … in
 `playerlist` order, and names in events that match nobody become `Unknown<n>`. puuids,
 summoner IDs and account IDs are dropped, and game IDs become `1` wherever they appear
 (a real one would look up everyone's name), including inside strings such as the
@@ -36,7 +36,7 @@ account. So are profile icons and summoner level/XP. A file that would still con
 real Riot ID, puuid, game ID, token or the League client password isn't written. Review
 a recording before committing it anyway.
 
-`downplayed-dev replay` uses the `lcu/` files of a fixture when they exist, so the result
+`riftreel-dev replay` uses the `lcu/` files of a fixture when they exist, so the result
 comes from the end-of-game stats (`--json` shows `resultSource`).
 
 ## Live Client Data API timelines (`*.json`)
@@ -52,7 +52,7 @@ Each file is one match as `https://127.0.0.1:2999/liveclientdata/*` would serve 
 | `events` | the complete `eventdata.Events` history |
 
 At game time *t*, `eventdata` returns every event with `EventTime <= t`. The fake server
-in the integration tests and `downplayed-dev replay` both work this way.
+in the integration tests and `riftreel-dev replay` both work this way.
 
 | Fixture | Covers |
 |---|---|
@@ -60,12 +60,12 @@ in the integration tests and `downplayed-dev replay` both work this way.
 | `aram_loss.json` | ARAM mode filter, triple kill, executions by champions, `GameEnd` **Lose** (no victory marker) |
 | `penta_cap.json` | Multikill relabelling up to a pentakill, and a long assist chain split by the 60 s moment cap |
 | `spectator.json` | No active player: never tracked |
-| `aram_mayhem_win.json` | **Recorded**, not synthetic: a real ARAM: Mayhem game (`gameMode` `KIWI`, queue 2400) taken with `downplayed-dev record`, pseudonymised. 196 events, double and triple kills, a turret destroyed by a minion, `GameEnd` **Win**. Its `lcu/` files are the client's real payloads |
+| `aram_mayhem_win.json` | **Recorded**, not synthetic: a real ARAM: Mayhem game (`gameMode` `KIWI`, queue 2400) taken with `riftreel-dev record`, pseudonymised. 196 events, double and triple kills, a turret destroyed by a minion, `GameEnd` **Win**. Its `lcu/` files are the client's real payloads |
 
 Run one through the tracker:
 
 ```
-cargo run --bin downplayed-dev -- replay fixtures/lol/ranked_win.json
+cargo run --bin riftreel-dev -- replay fixtures/lol/ranked_win.json
 ```
 
 `*.expected.txt` holds that command's output (`--extras --team` for the `_extras`

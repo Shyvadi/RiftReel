@@ -214,7 +214,7 @@ impl TrackerRuntime {
         };
         self.signal(signal).await;
 
-        // The client can turn up mid-match (Downplayed started during a game, or the
+        // The client can turn up mid-match (RiftReel started during a game, or the
         // client restarted): pick up the queue and mode it knows.
         if self.machine.state() == TrackerState::InGame {
             self.attach_lcu_session().await;

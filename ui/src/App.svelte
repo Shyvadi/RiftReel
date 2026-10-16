@@ -53,7 +53,7 @@
   <aside class="sidebar">
     <div class="brand">
       <Logo size={40} />
-      <span>Downplayed</span>
+      <span>RiftReel</span>
     </div>
     <nav aria-label="Pages">
       {#each pages as item (item.key)}
@@ -72,7 +72,7 @@
       <div class="status">
         <StatusPanel tracker={app.tracker} />
       </div>
-      <div class="version muted">Downplayed {app.version}</div>
+      <div class="version muted">RiftReel {app.version}</div>
     {/if}
   </aside>
 

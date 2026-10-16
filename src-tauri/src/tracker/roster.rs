@@ -228,13 +228,13 @@ mod tests {
     #[test]
     fn identity_matches_game_name_riot_id_and_legacy_names() {
         let me = PlayerIdentity::new(
-            Some("Down Player#DP1"),
-            Some("Down Player"),
-            Some("Down Player#DP1"),
+            Some("Rift Reeler#RR1"),
+            Some("Rift Reeler"),
+            Some("Rift Reeler#RR1"),
         );
-        assert!(me.matches("Down Player"));
-        assert!(me.matches("down player#dp1"));
-        assert!(me.matches(" DOWN PLAYER "));
+        assert!(me.matches("Rift Reeler"));
+        assert!(me.matches("rift reeler#rr1"));
+        assert!(me.matches(" RIFT REELER "));
         assert!(!me.matches("Down"));
         assert!(!me.matches(""));
 
@@ -253,12 +253,12 @@ mod tests {
 
     #[test]
     fn roster_knows_me_teams_and_champions() {
-        let me = PlayerIdentity::new(Some("Me#DP1"), Some("Me"), None);
+        let me = PlayerIdentity::new(Some("Me#RR1"), Some("Me"), None);
         let roster = Roster::from_players(
             &[
-                player("Me#DP1", "ORDER", "Shyvana"),
-                player("Mate#DP1", "ORDER", "Ahri"),
-                player("Foe#DP2", "CHAOS", "Zed"),
+                player("Me#RR1", "ORDER", "Shyvana"),
+                player("Mate#RR1", "ORDER", "Ahri"),
+                player("Foe#RR2", "CHAOS", "Zed"),
             ],
             &me,
         );

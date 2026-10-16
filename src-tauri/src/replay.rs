@@ -1,5 +1,5 @@
 //! Offline replay of Live Client fixtures (`fixtures/lol/*.json`): the backend of
-//! `downplayed-dev replay` and of the fixture tests.
+//! `riftreel-dev replay` and of the fixture tests.
 //!
 //! A fixture holds what the Live Client Data API would serve during one match:
 //! `activeplayer` (or the error a spectator gets), `playerlist`, `gamestats` and the
@@ -240,7 +240,7 @@ pub fn clock(seconds: f64) -> String {
     )
 }
 
-/// Human-readable report, as printed by `downplayed-dev replay`.
+/// Human-readable report, as printed by `riftreel-dev replay`.
 pub fn render_text(report: &ReplayReport) -> String {
     let summary = &report.summary;
     let mut out = String::new();

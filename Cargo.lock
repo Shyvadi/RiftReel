@@ -950,37 +950,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "downplayed"
-version = "0.1.0"
-dependencies = [
- "base64 0.22.1",
- "dirs 6.0.0",
- "futures-util",
- "hyper",
- "rcgen",
- "regex",
- "reqwest",
- "rusqlite",
- "rustls",
- "serde",
- "serde_json",
- "sysinfo",
- "tauri",
- "tauri-build",
- "tauri-plugin-notification",
- "tauri-plugin-single-instance",
- "thiserror 2.0.21",
- "tokio",
- "tokio-rustls",
- "tokio-tungstenite",
- "toml 1.1.8+spec-1.1.0",
- "tracing",
- "tracing-subscriber",
- "windows",
- "windows-core",
-]
-
-[[package]]
 name = "dpi"
 version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3278,6 +3247,37 @@ dependencies = [
  "wasm-bindgen-futures",
  "wasm-streams",
  "web-sys",
+]
+
+[[package]]
+name = "riftreel"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "dirs 6.0.0",
+ "futures-util",
+ "hyper",
+ "rcgen",
+ "regex",
+ "reqwest",
+ "rusqlite",
+ "rustls",
+ "serde",
+ "serde_json",
+ "sysinfo",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-notification",
+ "tauri-plugin-single-instance",
+ "thiserror 2.0.21",
+ "tokio",
+ "tokio-rustls",
+ "tokio-tungstenite",
+ "toml 1.1.8+spec-1.1.0",
+ "tracing",
+ "tracing-subscriber",
+ "windows",
+ "windows-core",
 ]
 
 [[package]]

@@ -1,10 +1,10 @@
-# Downplayed
+# RiftReel
 
 A lightweight, local-first **League of Legends** clip recorder for Windows. It is a
 clean-room alternative to Overwolf's Outplayed, with no ads, no telemetry and no
 Overwolf runtime.
 
-Status: **phases 0–4 of the [blueprint](docs/03-downplayed-blueprint.md#12-roadmap)**.
+Status: **phases 0–4 of the [blueprint](docs/03-riftreel-blueprint.md#12-roadmap)**.
 The tray app, settings, scrubbed logging, Riot's local API clients and the highlight
 tracker work. Each tracked match is recorded
 to `match.mp4` beside its `match.json`, with nothing to press: an ffmpeg sidecar
@@ -24,17 +24,17 @@ window opens on that game's review, once the game has closed. Storage shows what
 library takes and, once turned on, the cleanup keeps the full-match videos within an age
 and a size by sending the oldest to the Recycle Bin; it shows a dry run first. An
 Outplayed library's League videos can be imported where they are: they're listed,
-played and clipped like Downplayed's own, with what Outplayed's localStorage backup knew
+played and clipped like RiftReel's own, with what Outplayed's localStorage backup knew
 about them (champion, K/D/A, a win, markers), and nothing in the Outplayed folder
 changes.
 
 | Doc | What it covers |
 |---|---|
-| [docs/02-lol-tracker-spec.md](docs/02-lol-tracker-spec.md) | How Outplayed's League of Legends tracker works (GEP features, events, highlight timing, match lifecycle) and the equivalent official Riot interfaces Downplayed uses instead. |
-| [docs/03-downplayed-blueprint.md](docs/03-downplayed-blueprint.md) | Architecture, capture design, data model, storage policy, UI, performance budget, clean-room rules and roadmap. |
+| [docs/02-lol-tracker-spec.md](docs/02-lol-tracker-spec.md) | How Outplayed's League of Legends tracker works (GEP features, events, highlight timing, match lifecycle) and the equivalent official Riot interfaces RiftReel uses instead. |
+| [docs/03-riftreel-blueprint.md](docs/03-riftreel-blueprint.md) | Architecture, capture design, data model, storage policy, UI, performance budget, clean-room rules and roadmap. |
 
 Docs 02 and 03 cite "doc 01", a reverse-engineering report of Outplayed that this
-repository doesn't publish. Downplayed is built from those functional specs and Riot's
+repository doesn't publish. RiftReel is built from those functional specs and Riot's
 public interfaces, never from Outplayed's code or assets (blueprint §11).
 
 ## Building
@@ -55,7 +55,7 @@ downloads the pinned LGPL build, checks its SHA-256 and installs it with its lic
 powershell -ExecutionPolicy Bypass -File tools/fetch-ffmpeg.ps1
 ```
 
-Debug builds run it from there. A release build ships it next to `downplayed.exe`, with its
+Debug builds run it from there. A release build ships it next to `riftreel.exe`, with its
 license, through the bundle overlay (kept out of `tauri.conf.json` so that plain builds
 and `cargo test` don't need the binary):
 
@@ -64,9 +64,9 @@ cargo tauri build --config src-tauri/tauri.bundle.json
 ```
 
 For everyday use, `tools/install-local.ps1` builds a release (its UI inside) and installs
-it for this Windows user in `%LOCALAPPDATA%\Programs\Downplayed`, with ffmpeg beside it
-and a **Downplayed** Start menu shortcut to pin to the taskbar. Run it again after
-changes: a running Downplayed keeps going, and the next start (after **Quit** from the
+it for this Windows user in `%LOCALAPPDATA%\Programs\RiftReel`, with ffmpeg beside it
+and a **RiftReel** Start menu shortcut to pin to the taskbar. Run it again after
+changes: a running RiftReel keeps going, and the next start (after **Quit** from the
 tray) is the new build.
 
 ```bash
@@ -78,9 +78,9 @@ cargo test
 ```
 
 Run `cargo tauri dev` from the repository root. It starts the Vite dev server in `ui/` and
-the app, which opens its window. Closing the window destroys it and leaves Downplayed in
-the system tray: left-click the tray icon (or use **Open Downplayed**) for the window
-again; **Quit** exits. Opening Downplayed while it runs brings up its window rather than
+the app, which opens its window. Closing the window destroys it and leaves RiftReel in
+the system tray: left-click the tray icon (or use **Open RiftReel**) for the window
+again; **Quit** exits. Opening RiftReel while it runs brings up its window rather than
 starting a second one, and `--tray` starts it with the tray icon only.
 
 ```bash
@@ -90,21 +90,21 @@ cargo tauri dev
 Replay a recorded match through the tracker and print its markers and moments:
 
 ```bash
-cargo run --bin downplayed-dev -- replay fixtures/lol/ranked_win.json
+cargo run --bin riftreel-dev -- replay fixtures/lol/ranked_win.json
 ```
 
-`downplayed-dev lcu` follows the running League client's gameflow phase.
-`downplayed-dev live` prints markers from a game in progress (try Practice Tool).
-`downplayed-dev record` records the next game as a pseudonymised fixture into the
+`riftreel-dev lcu` follows the running League client's gameflow phase.
+`riftreel-dev live` prints markers from a game in progress (try Practice Tool).
+`riftreel-dev record` records the next game as a pseudonymised fixture into the
 recordings folder the window lists (see [fixtures/lol/README.md](fixtures/lol/README.md)),
-and `downplayed-dev eog` prints what Downplayed reads from the end-of-game stats.
-`downplayed-dev probe` runs the encoder probe (NVENC → AMF → QSV → CPU) and lists the
-monitors, `downplayed-dev audio` lists the sound devices, `downplayed-dev capture 30`
+and `riftreel-dev eog` prints what RiftReel reads from the end-of-game stats.
+`riftreel-dev probe` runs the encoder probe (NVENC → AMF → QSV → CPU) and lists the
+monitors, `riftreel-dev audio` lists the sound devices, `riftreel-dev capture 30`
 records 30 seconds the way a match is recorded and prints the frame, dropped-frame and
-duplicated-frame counts and how the audio went, `downplayed-dev library [--cold]`
+duplicated-frame counts and how the audio went, `riftreel-dev library [--cold]`
 times the library index (rebuilt from scratch with `--cold`) and a few list queries,
-`downplayed-dev cleanup` prints the cleanup's dry run, and
-`downplayed-dev outplayed D:\Outplayed` what importing an Outplayed library would add
+`riftreel-dev cleanup` prints the cleanup's dry run, and
+`riftreel-dev outplayed D:\Outplayed` what importing an Outplayed library would add
 (`--write` imports it).
 
 > **Troubleshooting:** if building `ring` fails with "Cannot open include file:
@@ -117,18 +117,18 @@ times the library index (rebuilt from scratch with `--cold`) and a few list quer
 
 | What | Where |
 |---|---|
-| Settings | `%APPDATA%\Downplayed\settings.toml` (created on first run; every value optional) |
-| Logs | `%LOCALAPPDATA%\Downplayed\logs\downplayed.log`, 5 × 5 MB rotation, Riot identifiers scrubbed |
-| Matches | `%LOCALAPPDATA%\Downplayed\library\League of Legends\<date>_<time>_<queue>_<champion>\` (UTC), one folder per tracked match: `match.json`, `match.mp4` when it was recorded, the clips made from it in `clips\` with their thumbnails in `thumbs\`, and its list thumbnail `thumbs\match.jpg` |
-| Library index | `%LOCALAPPDATA%\Downplayed\library\library.db`: a cache of the match folders' `match.json` files, rebuilt from them if it is lost or damaged |
-| Cleanup notes | `%LOCALAPPDATA%\Downplayed\library\cleanup.json`: videos the cleanup couldn't recycle, and its last run |
-| Imports | `%LOCALAPPDATA%\Downplayed\library\imports.json`: the Outplayed folders imported, and whether the cleanup may remove their videos. Each imported video gets a folder `<date>_<time>_Outplayed[_<champion>]` whose `match.json` points at it |
-| Encoder probe | `%LOCALAPPDATA%\Downplayed\capture-probe.json`: which encoder works here, probed once per ffmpeg binary |
-| Recordings | `%LOCALAPPDATA%\Downplayed\recordings`, where `downplayed-dev record` saves by default |
-| `DOWNPLAYED_HOME` | Put settings, logs, matches and recordings under one folder instead (development); such a Downplayed runs beside the real one |
-| Installed app | `%LOCALAPPDATA%\Programs\Downplayed` (`tools/install-local.ps1`), and the Start menu shortcut **Downplayed** |
-| `DOWNPLAYED_LOG` | Override the log level, e.g. `debug` |
-| `DOWNPLAYED_OPEN_WINDOW` | `hidden`: create the window invisible at startup (smoke tests) |
+| Settings | `%APPDATA%\RiftReel\settings.toml` (created on first run; every value optional) |
+| Logs | `%LOCALAPPDATA%\RiftReel\logs\riftreel.log`, 5 × 5 MB rotation, Riot identifiers scrubbed |
+| Matches | `%LOCALAPPDATA%\RiftReel\library\League of Legends\<date>_<time>_<queue>_<champion>\` (UTC), one folder per tracked match: `match.json`, `match.mp4` when it was recorded, the clips made from it in `clips\` with their thumbnails in `thumbs\`, and its list thumbnail `thumbs\match.jpg` |
+| Library index | `%LOCALAPPDATA%\RiftReel\library\library.db`: a cache of the match folders' `match.json` files, rebuilt from them if it is lost or damaged |
+| Cleanup notes | `%LOCALAPPDATA%\RiftReel\library\cleanup.json`: videos the cleanup couldn't recycle, and its last run |
+| Imports | `%LOCALAPPDATA%\RiftReel\library\imports.json`: the Outplayed folders imported, and whether the cleanup may remove their videos. Each imported video gets a folder `<date>_<time>_Outplayed[_<champion>]` whose `match.json` points at it |
+| Encoder probe | `%LOCALAPPDATA%\RiftReel\capture-probe.json`: which encoder works here, probed once per ffmpeg binary |
+| Recordings | `%LOCALAPPDATA%\RiftReel\recordings`, where `riftreel-dev record` saves by default |
+| `RIFTREEL_HOME` | Put settings, logs, matches and recordings under one folder instead (development); such a RiftReel runs beside the real one |
+| Installed app | `%LOCALAPPDATA%\Programs\RiftReel` (`tools/install-local.ps1`), and the Start menu shortcut **RiftReel** |
+| `RIFTREEL_LOG` | Override the log level, e.g. `debug` |
+| `RIFTREEL_OPEN_WINDOW` | `hidden`: create the window invisible at startup (smoke tests) |
 
 Capture settings live in `[capture]`: `enabled`, `fps` (60), `bitrate_mbps` (10),
 `encoder` (`auto`, or e.g. `h264_nvenc`) and `ffmpeg_path` (empty: the bundled ffmpeg).
@@ -153,7 +153,7 @@ go to the Recycle Bin, then the oldest while full matches take more than
 `clips_warn_gb`, 50), nor are favorites (★ in a match's review) or imported videos
 (unless allowed for that import in Storage). A video too big for the Recycle Bin is never
 deleted: it stays, flagged in Storage.
-`downplayed-dev cleanup` prints what the cleanup would do now.
+`riftreel-dev cleanup` prints what the cleanup would do now.
 
 ## Layout
 
@@ -175,7 +175,7 @@ src-tauri/src/
   thumbnails.rs              list thumbnails, made in the background (never in game)
   shell.rs                   Recycle Bin (never deleting outright), clipboard, Save as,
                              Explorer
-  replay.rs, bin/            fixture replay and the downplayed-dev tool
+  replay.rs, bin/            fixture replay and the riftreel-dev tool
 src-tauri/tests/             fake HTTPS Live Client API + fake LCU, end-to-end runtime tests
 fixtures/lol/                synthetic Live Client / LCU fixtures and expected replay output
 ui/                          Vite + Svelte window: status, matches, review with video
@@ -187,10 +187,10 @@ tools/make-icons.py          draws the icon set in src-tauri/icons (Pillow)
 ## License
 
 [MIT](LICENSE). The ffmpeg build that `tools/fetch-ffmpeg.ps1` downloads is LGPL and is
-shipped as a separate program next to Downplayed, with its license and source offer.
+shipped as a separate program next to RiftReel, with its license and source offer.
 
-Downplayed isn't endorsed by Riot Games and doesn't reflect the views or opinions of
+RiftReel isn't endorsed by Riot Games and doesn't reflect the views or opinions of
 Riot Games or anyone officially involved in producing or managing Riot Games
 properties. Riot Games and all associated properties are trademarks or registered
 trademarks of Riot Games, Inc. Outplayed and Overwolf are trademarks of Overwolf Ltd.;
-Downplayed is not affiliated with them.
+RiftReel is not affiliated with them.

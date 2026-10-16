@@ -20,7 +20,7 @@ use tokio_tungstenite::tungstenite::protocol::Role;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::WebSocketStream;
 
-use downplayed_lib::replay::Fixture;
+use riftreel_lib::replay::Fixture;
 
 pub fn fixture_path(relative: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -64,7 +64,7 @@ impl TestPki {
         let mut ca_params = CertificateParams::new(Vec::<String>::new()).unwrap();
         ca_params
             .distinguished_name
-            .push(DnType::CommonName, "Downplayed Test CA");
+            .push(DnType::CommonName, "RiftReel Test CA");
         ca_params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
         let ca_key = KeyPair::generate().unwrap();
         let ca_cert = ca_params.self_signed(&ca_key).unwrap();
@@ -95,7 +95,7 @@ impl TestPki {
 
     /// A client config trusting only this test CA.
     pub fn client_config(&self) -> rustls::ClientConfig {
-        downplayed_lib::league::tls::client_config_for_root(self.ca_pem.as_bytes()).unwrap()
+        riftreel_lib::league::tls::client_config_for_root(self.ca_pem.as_bytes()).unwrap()
     }
 }
 

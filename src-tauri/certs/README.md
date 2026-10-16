@@ -4,7 +4,7 @@
 
 Riot's root certificate for the game's local HTTPS endpoints. Both the Live Client Data
 API (`https://127.0.0.1:2999`) and the League client (LCU) serve leaf certificates
-issued by it. Downplayed trusts this root and nothing else for those connections (see
+issued by it. RiftReel trusts this root and nothing else for those connections (see
 `src/league/tls.rs`).
 
 | | |

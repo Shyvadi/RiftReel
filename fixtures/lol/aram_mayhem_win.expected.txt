@@ -1,4 +1,4 @@
-Recorded KIWI game on 2026-10-16 00:01 UTC with downplayed-dev record: Fizz (ORDER), Win. Players pseudonymised; Downplayer#DP1 is the local player
+Recorded KIWI game on 2026-10-16 00:01 UTC with riftreel-dev record: Fizz (ORDER), Win. Players pseudonymised; Reeler#RR1 is the local player
 mode KIWI · champion Fizz · team ORDER · 196 events
 
 Markers

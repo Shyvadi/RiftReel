@@ -1,7 +1,7 @@
 //! The cleanup, or janitor (doc 03 §8): keeps the full-match videos within the age and
 //! size the user set, oldest first, by sending them to the Recycle Bin. Clips are never
 //! removed (their total only gets a warning), a favorite match's video never, and a video
-//! Downplayed didn't record (an Outplayed import) only when the user allowed it for that
+//! RiftReel didn't record (an Outplayed import) only when the user allowed it for that
 //! import. A video Windows can't recycle is kept and flagged for the user. It also clears
 //! clip thumbnails without their clip and empty match folders.
 //!
@@ -65,7 +65,7 @@ pub struct Holding {
     pub favorite: bool,
     /// The full-match video and its size.
     pub video: Option<(PathBuf, u64)>,
-    /// The janitor may remove the video: Downplayed recorded it, or the user allowed it
+    /// The janitor may remove the video: RiftReel recorded it, or the user allowed it
     /// for the import it came from.
     pub managed: bool,
     pub clip_bytes: u64,
@@ -466,7 +466,7 @@ fn holding(id: String, dir: &Path, summary: &Value, imports: &[Import]) -> Holdi
     }
 }
 
-/// Whether the cleanup may remove a match's video: Downplayed recorded it, or it was
+/// Whether the cleanup may remove a match's video: RiftReel recorded it, or it was
 /// imported and the user allowed the cleanup for that import, and it is still inside the
 /// folder imported from.
 fn managed(summary: &Value, video: Option<&Path>, imports: &[Import]) -> bool {
@@ -665,7 +665,7 @@ mod tests {
 
     fn temp_dir(name: &str) -> PathBuf {
         let dir =
-            std::env::temp_dir().join(format!("downplayed-janitor-{name}-{}", std::process::id()));
+            std::env::temp_dir().join(format!("riftreel-janitor-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         dir
     }
@@ -910,7 +910,7 @@ mod tests {
         assert!(thumbs.join("0001.jpg").is_file(), "a listed clip's");
         assert!(
             thumbs.join("notes.txt").is_file(),
-            "not a picture Downplayed made"
+            "not a picture RiftReel made"
         );
         assert!(!empty.exists());
         assert!(

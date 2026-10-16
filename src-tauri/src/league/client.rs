@@ -524,7 +524,7 @@ mod tests {
 
     #[test]
     fn credentials_prefer_lockfile_then_arguments() {
-        let dir = std::env::temp_dir().join(format!("downplayed-lcu-test-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("riftreel-lcu-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let process = ClientProcess {
             pid: 1,

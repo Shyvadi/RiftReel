@@ -240,7 +240,7 @@ pub fn pipe_name(kind: SourceKind) -> String {
     static RUN: AtomicU64 = AtomicU64::new(0);
     let run = RUN.fetch_add(1, Ordering::Relaxed);
     format!(
-        r"\\.\pipe\downplayed-{}-{run}-{}",
+        r"\\.\pipe\riftreel-{}-{run}-{}",
         std::process::id(),
         kind.slug()
     )
@@ -553,7 +553,7 @@ mod tests {
         let a = pipe_name(SourceKind::Desktop);
         let b = pipe_name(SourceKind::Desktop);
         assert_ne!(a, b);
-        assert!(a.starts_with(r"\\.\pipe\downplayed-") && a.ends_with("-desktop"));
+        assert!(a.starts_with(r"\\.\pipe\riftreel-") && a.ends_with("-desktop"));
         assert!(pipe_name(SourceKind::Microphone).ends_with("-mic"));
     }
 

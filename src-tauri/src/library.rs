@@ -1,6 +1,6 @@
 //! Match history for the window: the library of doc 03 §7. Every finished match gets a
 //! folder with its `match.json` (the tracker's [`MatchSummary`] plus `schema` and `id`)
-//! and, when it was recorded, `match.mp4`. Recordings saved by `downplayed-dev record`
+//! and, when it was recorded, `match.mp4`. Recordings saved by `riftreel-dev record`
 //! are listed too and replayed into the same summary, so the window reviews both the
 //! same way.
 //!
@@ -54,7 +54,7 @@ const RECORDING_PREFIX: &str = "recording:";
 /// What recordings were replayed with: replayed again when the marker settings change.
 const RECORDINGS_CONFIG_KEY: &str = "recordings_config";
 /// The list's first page looks at the folders again (for changes made outside
-/// Downplayed) when the last look is older than this.
+/// RiftReel) when the last look is older than this.
 const QUERY_SYNC_AGE: Duration = Duration::from_secs(10);
 
 /// One row of the match list.
@@ -419,7 +419,7 @@ impl Library {
         let mut summary = read_json(&dir.join(MATCH_FILE))?;
         let video = video_path(&dir, &summary);
         let object = summary.as_object_mut()?;
-        // A match of Downplayed's own has no `source`; an imported one keeps its own.
+        // A match of RiftReel's own has no `source`; an imported one keeps its own.
         object.entry("source").or_insert_with(|| "game".into());
         if let Some(video) = video {
             object.insert("videoPath".into(), video.display().to_string().into());
@@ -796,7 +796,7 @@ fn thumbnail_moment(summary: &Value) -> f64 {
         .unwrap_or(10.0)
 }
 
-/// How long a match's video is: its frames at its frame rate (a recording of Downplayed's
+/// How long a match's video is: its frames at its frame rate (a recording of RiftReel's
 /// own), or the length read from the file (an import).
 fn video_seconds(summary: &Value) -> Option<f64> {
     let recording = &summary["recording"];
@@ -1003,7 +1003,7 @@ mod tests {
 
     fn temp_dir(name: &str) -> PathBuf {
         let dir =
-            std::env::temp_dir().join(format!("downplayed-library-{name}-{}", std::process::id()));
+            std::env::temp_dir().join(format!("riftreel-library-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         dir
     }

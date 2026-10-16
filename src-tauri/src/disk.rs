@@ -68,7 +68,7 @@ mod tests {
         if cfg!(windows) {
             let free = free.expect("the temp folder's drive");
             assert!(free > 0);
-            let later = free_space(&here.join("downplayed-not-made").join("yet")).unwrap();
+            let later = free_space(&here.join("riftreel-not-made").join("yet")).unwrap();
             // The same drive (other programs may write in between).
             assert!(later.abs_diff(free) < 1_000_000_000, "{later} vs {free}");
         }

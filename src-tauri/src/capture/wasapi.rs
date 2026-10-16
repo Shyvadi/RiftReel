@@ -90,7 +90,7 @@ pub async fn spawn(
     }
 }
 
-/// An audio endpoint, for `downplayed-dev audio`.
+/// An audio endpoint, for `riftreel-dev audio`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Device {
     pub name: String,

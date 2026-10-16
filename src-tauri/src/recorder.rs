@@ -1,5 +1,5 @@
 //! Fixture recorder (doc 02 §B5.1): saves one match from Riot's local APIs in the
-//! fixture format of `fixtures/lol/README.md`, the backend of `downplayed-dev record`.
+//! fixture format of `fixtures/lol/README.md`, the backend of `riftreel-dev record`.
 //!
 //! Kept from the Live Client Data API: `activeplayer` (or the error a spectator gets),
 //! the last `playerlist` read (end-of-game scores), `gamestats` and the complete
@@ -7,8 +7,8 @@
 //! stats block and the gameflow-phase WebSocket frames.
 //!
 //! Raw payloads only live in memory. Everything written goes through
-//! [`Pseudonymizer`] first: Riot IDs and names become `Downplayer#DP1` (the local
-//! player) and `Player1#DP1`, `Player2#DP1`, … consistently across all files; puuids,
+//! [`Pseudonymizer`] first: Riot IDs and names become `Reeler#RR1` (the local
+//! player) and `Player1#RR1`, `Player2#RR1`, … consistently across all files; puuids,
 //! summoner and account IDs are dropped; game IDs (which would look the match up,
 //! names included) are replaced. The League client password is never part of a
 //! payload, and every file is checked for it before it is written.
@@ -32,7 +32,7 @@ use crate::league::models::GameflowPhase;
 use crate::tracker::roster::is_game_object;
 
 /// Pseudonym of the local player (the synthetic fixtures use it too).
-pub const LOCAL_PLAYER: &str = "Downplayer";
+pub const LOCAL_PLAYER: &str = "Reeler";
 
 /// Everything else becomes `Player<n>`.
 const OTHER_PLAYER: &str = "Player";
@@ -40,8 +40,8 @@ const OTHER_PLAYER: &str = "Player";
 /// Names in name fields that match no player and no game object.
 const UNKNOWN_NAME: &str = "Unknown";
 
-/// Pseudonymous tag lines are `DP1`, `DP2`, … (`DP0`: tag of an unmatched player).
-const TAG_PREFIX: &str = "DP";
+/// Pseudonymous tag lines are `RR1`, `RR2`, … (`RR0`: tag of an unmatched player).
+const TAG_PREFIX: &str = "RR";
 
 /// Replacement for game IDs.
 const PSEUDO_GAME_ID: u64 = 1;
@@ -253,7 +253,7 @@ pub struct Pseudonymizer {
     names: HashMap<String, String>,
     /// Internal (folded, no spaces) name → pseudonymous internal name.
     internal_names: HashMap<String, String>,
-    /// Every player found, with their pseudonymous tag line (`DP0` for a puuid-only
+    /// Every player found, with their pseudonymous tag line (`RR0` for a puuid-only
     /// entry, which has no name to replace).
     players: Vec<(RealPlayer, String)>,
     /// Names in name fields that matched nobody.
@@ -825,7 +825,7 @@ impl Recording {
         }
 
         let mut description = format!(
-            "Recorded {} game on {} with downplayed-dev record",
+            "Recorded {} game on {} with riftreel-dev record",
             self.game_mode().unwrap_or("unknown"),
             utc_minute(recorded_at)
         );
@@ -1443,7 +1443,7 @@ mod tests {
         );
         let fixture = Fixture::parse(files.get("classic-test.json").unwrap()).unwrap();
         assert!(fixture.description.starts_with(
-            "Recorded CLASSIC game on 2026-10-15 16:12 UTC with downplayed-dev record: Shyvana (ORDER), Win."
+            "Recorded CLASSIC game on 2026-10-15 16:12 UTC with riftreel-dev record: Shyvana (ORDER), Win."
         ), "{}", fixture.description);
         assert_eq!(fixture.events.len(), 11);
         assert_eq!(
@@ -1513,8 +1513,8 @@ mod tests {
     fn pseudonyms_are_consistent_and_keep_game_vocabulary() {
         let files = files();
         let fixture: Value = serde_json::from_str(files.get("classic-test.json").unwrap()).unwrap();
-        assert_eq!(fixture["activeplayer"]["riotId"], "Downplayer#DP1");
-        assert_eq!(fixture["activeplayer"]["riotIdTagLine"], "DP1");
+        assert_eq!(fixture["activeplayer"]["riotId"], "Reeler#RR1");
+        assert_eq!(fixture["activeplayer"]["riotIdTagLine"], "RR1");
         assert_eq!(
             fixture["activeplayer"]["abilities"]["Q"]["displayName"],
             "Twin Bite"
@@ -1529,12 +1529,12 @@ mod tests {
         assert_eq!(
             ids,
             [
-                "Downplayer#DP1",
-                "Player1#DP1",
-                "Player2#DP1",
-                "Player3#DP1",
-                "Player3#DP2",
-                "Player4#DP1"
+                "Reeler#RR1",
+                "Player1#RR1",
+                "Player2#RR1",
+                "Player3#RR1",
+                "Player3#RR2",
+                "Player4#RR1"
             ]
         );
         let players = fixture["playerlist"].as_array().unwrap();
@@ -1549,7 +1549,7 @@ mod tests {
         );
 
         let events = fixture["events"].as_array().unwrap();
-        assert_eq!(events[1]["KillerName"], "Downplayer");
+        assert_eq!(events[1]["KillerName"], "Reeler");
         assert_eq!(events[1]["VictimName"], "Player3");
         assert_eq!(events[1]["Assisters"], json!(["Player1"]));
         assert_eq!(
@@ -1562,7 +1562,7 @@ mod tests {
             events[6]["KillerName"], "Unknown1",
             "not a player in this match"
         );
-        assert_eq!(events[9]["Acer"], "Downplayer");
+        assert_eq!(events[9]["Acer"], "Reeler");
 
         let session: Value = serde_json::from_str(
             files
@@ -1572,12 +1572,12 @@ mod tests {
         .unwrap();
         let data = &session["gameData"];
         assert_eq!(data["gameId"], 1);
-        assert_eq!(data["teamOne"][0]["gameName"], "Downplayer");
-        assert_eq!(data["teamOne"][0]["tagLine"], "DP1");
+        assert_eq!(data["teamOne"][0]["gameName"], "Reeler");
+        assert_eq!(data["teamOne"][0]["tagLine"], "RR1");
         assert_eq!(data["teamOne"][1]["gameName"], "Player1");
         assert_eq!(
             data["playerChampionSelections"][0]["summonerInternalName"],
-            "downplayer"
+            "reeler"
         );
         assert_eq!(data["queue"]["description"], "Ranked Solo/Duo");
 
@@ -1587,11 +1587,11 @@ mod tests {
                 .unwrap(),
         )
         .unwrap();
-        assert_eq!(eog["localPlayer"]["riotIdGameName"], "Downplayer");
-        assert_eq!(eog["localPlayer"]["summonerName"], "Downplayer");
+        assert_eq!(eog["localPlayer"]["riotIdGameName"], "Reeler");
+        assert_eq!(eog["localPlayer"]["summonerName"], "Reeler");
         assert_eq!(eog["localPlayer"]["championName"], "Shyvana");
         assert_eq!(eog["teams"][0]["players"][0]["riotIdGameName"], "Player1");
-        assert_eq!(eog["teams"][1]["players"][0]["riotIdTagLine"], "DP1");
+        assert_eq!(eog["teams"][1]["players"][0]["riotIdTagLine"], "RR1");
         assert_eq!(eog["teams"][1]["players"][0]["riotIdGameName"], "Player4");
         assert_eq!(eog["reportGameId"], 1);
         assert_eq!(
@@ -1629,7 +1629,7 @@ mod tests {
             .summary;
 
         let files = files();
-        let dir = std::env::temp_dir().join(format!("downplayed-recorder-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("riftreel-recorder-{}", std::process::id()));
         files.write(&dir).unwrap();
         let path = dir.join("classic-test.json");
         let lcu = LcuRecording::load_beside(&path).unwrap();
@@ -1672,7 +1672,7 @@ mod tests {
             .check("x.json", "{\"chat\":\"7123456789-eog\"}")
             .is_err());
         assert!(pseudo
-            .check("x.json", "{\"riotId\":\"Downplayer#DP1\"}")
+            .check("x.json", "{\"riotId\":\"Reeler#RR1\"}")
             .is_ok());
     }
 
@@ -1714,8 +1714,8 @@ mod tests {
         assert!(files.redacted.is_empty(), "{:?}", files.redacted);
         let fixture: Value = serde_json::from_str(files.get("tr.json").unwrap()).unwrap();
         let last = fixture["events"].as_array().unwrap().last().unwrap();
-        assert_eq!(last["Text"], "gg Player5#DP1");
-        assert_eq!(fixture["playerlist"][6]["riotId"], "Player5#DP1");
+        assert_eq!(last["Text"], "gg Player5#RR1");
+        assert_eq!(fixture["playerlist"][6]["riotId"], "Player5#RR1");
     }
 
     #[test]

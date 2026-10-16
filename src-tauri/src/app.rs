@@ -1,6 +1,6 @@
 //! The tray application. Opening it opens its window (`--tray`: only the tray icon); the
-//! window is destroyed when closed and Downplayed stays in the tray, and opening it again
-//! brings the window back rather than starting a second Downplayed. The tracker runs in
+//! window is destroyed when closed and RiftReel stays in the tray, and opening it again
+//! brings the window back rather than starting a second RiftReel. The tracker runs in
 //! the background the whole time and records each match; each match it finishes is saved
 //! to the library and, by default, opened for review once the game has closed. The
 //! cleanup, when the user has turned it on, runs after each match and every hour, never
@@ -48,13 +48,13 @@ const CLEANUP_EVERY: Duration = Duration::from_secs(60 * 60);
 const CLEANUP_GAME_CHECK: Duration = Duration::from_secs(2);
 
 /// `hidden` creates the window invisible at startup, for smoke tests (development).
-const OPEN_WINDOW_ENV: &str = "DOWNPLAYED_OPEN_WINDOW";
+const OPEN_WINDOW_ENV: &str = "RIFTREEL_OPEN_WINDOW";
 /// Starts with the tray icon only, no window (say, a start with Windows).
 const TRAY_ARG: &str = "--tray";
 /// The app id (`identifier` in tauri.conf.json) an installed copy runs under: its Start
 /// menu shortcut carries it.
 #[cfg(windows)]
-const APP_ID: &str = "app.downplayed.desktop";
+const APP_ID: &str = "app.riftreel.desktop";
 
 struct AppState {
     status: watch::Receiver<TrackerStatus>,
@@ -572,7 +572,7 @@ async fn set_cleanup(
 ) -> Result<(), String> {
     if !state.settings_writable {
         return Err(format!(
-            "{} couldn't be read when Downplayed started; fix it (or remove it for the defaults), then restart Downplayed.",
+            "{} couldn't be read when RiftReel started; fix it (or remove it for the defaults), then restart RiftReel.",
             state.paths.settings_file.display()
         ));
     }
@@ -652,9 +652,9 @@ pub fn run() {
         &loaded.settings.logging.level,
         cfg!(debug_assertions),
     ) {
-        eprintln!("Downplayed: file logging unavailable: {e}");
+        eprintln!("RiftReel: file logging unavailable: {e}");
     }
-    tracing::info!(version = env!("CARGO_PKG_VERSION"), "Downplayed starting");
+    tracing::info!(version = env!("CARGO_PKG_VERSION"), "RiftReel starting");
     match &loaded.outcome {
         LoadOutcome::Loaded => {}
         LoadOutcome::Created => {
@@ -689,7 +689,7 @@ pub fn run() {
 
     let (status_tx, status_rx) = watch::channel(TrackerStatus::default());
     let mut builder = tauri::Builder::default();
-    // One Downplayed at a time: opening it again brings up the running one's window
+    // One RiftReel at a time: opening it again brings up the running one's window
     // (not for a `--tray` start) instead of a second tracker recording the same games.
     // A development home runs on its own, beside the real one.
     if AppPaths::development_home().is_none() {
@@ -748,7 +748,7 @@ pub fn run() {
             tray::create(app.handle())?;
             let thumbnails = Thumbnails::start(app.handle().clone(), library.clone(), ffmpeg);
             app.manage(thumbnails.clone());
-            // Matches changed while Downplayed wasn't running (or a new index) are read
+            // Matches changed while RiftReel wasn't running (or a new index) are read
             // now, so the window's first page doesn't wait for them.
             let indexed = library.clone();
             tauri::async_runtime::spawn_blocking(move || {
@@ -784,10 +784,10 @@ pub fn run() {
             Ok(())
         })
         .build(tauri::generate_context!())
-        .expect("failed to build the Downplayed app");
+        .expect("failed to build the RiftReel app");
 
     app.run(|_app, event| {
-        // Closing the last window must not quit: Downplayed lives in the tray. Tray
+        // Closing the last window must not quit: RiftReel lives in the tray. Tray
         // "Quit" calls `exit(0)`, which carries an exit code and goes through.
         if let RunEvent::ExitRequested {
             code: None, api, ..
@@ -935,7 +935,7 @@ async fn tell_after_game(app: AppHandle, message: String) {
     let shown = app
         .notification()
         .builder()
-        .title("Downplayed")
+        .title("RiftReel")
         .body(&message)
         .show();
     if let Err(error) = shown {

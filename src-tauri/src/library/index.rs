@@ -59,9 +59,9 @@ const MAX_LIMIT: u32 = 500;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Source {
-    /// Tracked live by Downplayed.
+    /// Tracked live by RiftReel.
     Game,
-    /// A fixture recorded by `downplayed-dev record`.
+    /// A fixture recorded by `riftreel-dev record`.
     Recording,
     /// A video imported from Outplayed (by reference).
     Outplayed,

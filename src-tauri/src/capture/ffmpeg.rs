@@ -1,4 +1,4 @@
-//! The ffmpeg sidecar: where the binary is, the command lines Downplayed runs, and its
+//! The ffmpeg sidecar: where the binary is, the command lines RiftReel runs, and its
 //! `-progress` reports.
 //!
 //! Video goes from the GPU straight to disk: `ddagrab` hands D3D11 frames to the
@@ -21,7 +21,7 @@ use super::audio::{AudioInput, RATE};
 use super::clips::{self, ClipPlan};
 
 /// Tauri's sidecar file name. `tools/fetch-ffmpeg.ps1` installs it in
-/// `src-tauri/binaries`; the installer puts it next to Downplayed as `ffmpeg.exe`.
+/// `src-tauri/binaries`; the installer puts it next to RiftReel as `ffmpeg.exe`.
 pub const SIDECAR_FILE: &str = "ffmpeg-x86_64-pc-windows-msvc.exe";
 
 /// The capture output: fragmented MP4, one fragment per keyframe, so a crash or a kill
@@ -31,7 +31,7 @@ pub const FRAGMENTED_MP4: &str = "+frag_keyframe+empty_moov+default_base_moof";
 /// How often ffmpeg reports progress (`-stats_period`).
 pub const PROGRESS_PERIOD: Duration = Duration::from_millis(500);
 
-/// Finds the ffmpeg to record with: the configured one, `ffmpeg.exe` beside Downplayed
+/// Finds the ffmpeg to record with: the configured one, `ffmpeg.exe` beside RiftReel
 /// (the bundled sidecar), or in debug builds the copy `tools/fetch-ffmpeg.ps1` installs.
 /// Never `PATH`: an arbitrary ffmpeg may lack `ddagrab` (5.1 "essentials" does) or be a
 /// GPL build.
@@ -459,7 +459,7 @@ fn command(ffmpeg: &Path, args: &[OsString], priority: Priority) -> Command {
     command
 }
 
-/// Starts a capture. ffmpeg runs in a kill-on-close job, so it never outlives Downplayed
+/// Starts a capture. ffmpeg runs in a kill-on-close job, so it never outlives RiftReel
 /// (a crash still leaves a playable fragmented file).
 pub fn spawn_capture(
     ffmpeg: &Path,
@@ -753,7 +753,7 @@ async fn replace(temp: &Path, file: &Path) -> Result<(), String> {
     }
 }
 
-/// Kill-on-close job objects: a sidecar dies with Downplayed, however Downplayed ends.
+/// Kill-on-close job objects: a sidecar dies with RiftReel, however RiftReel ends.
 mod job {
     use std::io;
 

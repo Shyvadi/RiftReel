@@ -1,4 +1,4 @@
-//! Downplayed: a lightweight, local-first League of Legends clip recorder.
+//! RiftReel: a lightweight, local-first League of Legends clip recorder.
 //!
 //! This crate is the Rust core: the tray app shell, settings, scrubbed logging, Riot's
 //! local API clients ([`league`]), the highlight tracker ([`tracker`]), video capture

@@ -260,7 +260,7 @@
     <p class="muted small">0 means no limit.</p>
     {#if !valid}<p class="error small">Days are whole numbers; none of these can be negative.</p>{/if}
     {#if !overview.settingsWritable}
-      <p class="error small">The settings file couldn't be read when Downplayed started, so it can't be changed here.</p>
+      <p class="error small">The settings file couldn't be read when RiftReel started, so it can't be changed here.</p>
     {/if}
     <div class="actions">
       {#if saved.cleanup}
@@ -392,7 +392,7 @@
           <div class="confirm" role="alertdialog" aria-label="Let the cleanup remove imported videos">
             <span>
               When it is on, the cleanup will send this import's old videos from {item.root} to the Recycle Bin, by the
-              same limits as Downplayed's own. Favorites stay.
+              same limits as RiftReel's own. Favorites stay.
             </span>
             <button type="button" class="btn primary" onclick={() => importCleanup(item, true)}>Allow</button>
             <button type="button" class="btn" onclick={() => (allowing = null)}>Cancel</button>
@@ -401,7 +401,7 @@
       </div>
     {/each}
     <p class="lead muted">
-      Imports an Outplayed library's League videos where they are: Downplayed lists, plays and clips them, and changes
+      Imports an Outplayed library's League videos where they are: RiftReel lists, plays and clips them, and changes
       nothing in the Outplayed folder.
     </p>
     <div class="actions">
@@ -447,7 +447,7 @@
       <dt>Logs</dt>
       <dd><code>{folders.logs}</code></dd>
     </dl>
-    <p class="muted small">Closing the window leaves Downplayed running in the tray; Quit from the tray icon ends it.</p>
+    <p class="muted small">Closing the window leaves RiftReel running in the tray; Quit from the tray icon ends it.</p>
   </section>
 {/if}
 

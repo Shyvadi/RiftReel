@@ -1,4 +1,4 @@
-//! `downplayed-dev record` against the fake Live Client API and League client: the
+//! `riftreel-dev record` against the fake Live Client API and League client: the
 //! recording is a fixture that replays exactly like the match it recorded, and holds no
 //! real name, Riot ID, puuid, game ID or League client password.
 
@@ -9,12 +9,12 @@ use std::time::Duration;
 
 use serde_json::{json, Value};
 
-use downplayed_lib::league::client::{CredentialSource, LcuClient, LcuCredentials};
-use downplayed_lib::league::live::LiveClient;
-use downplayed_lib::recorder::{record, RecordError, Recorded, RecorderTimings};
-use downplayed_lib::replay::{replay, replay_with, Fixture, LcuRecording};
-use downplayed_lib::tracker::normalize::MarkerConfig;
-use downplayed_lib::tracker::session::{ResultSource, SessionConfig};
+use riftreel_lib::league::client::{CredentialSource, LcuClient, LcuCredentials};
+use riftreel_lib::league::live::LiveClient;
+use riftreel_lib::recorder::{record, RecordError, Recorded, RecorderTimings};
+use riftreel_lib::replay::{replay, replay_with, Fixture, LcuRecording};
+use riftreel_lib::tracker::normalize::MarkerConfig;
+use riftreel_lib::tracker::session::{ResultSource, SessionConfig};
 use support::{eventually, fixture_path, FakeLcuServer, FakeLiveServer, TestPki};
 
 const PASSWORD: &str = "Rec0rder-test-Pa55";
@@ -24,7 +24,7 @@ const CHAT_JWT: &str = "eyJraWQiOiIxIn0.eyJzdWIiOiJyZWFsLWFjY291bnQifQ.c2lnbmF0d
 
 /// ranked_win with real-looking players instead of the synthetic names.
 const RENAMES: [(&str, &str); 12] = [
-    ("Downplayer", "Faker Fan"),
+    ("Reeler", "Faker Fan"),
     ("AllyTop", "Top Laner Joe"),
     ("AllyMid", "Midnight Owl"),
     ("AllyBot", "Bottom Text"),
@@ -34,8 +34,8 @@ const RENAMES: [(&str, &str); 12] = [
     ("EnemyMid", "Mid Or Feed"),
     ("EnemyBot", "Crit Happens"),
     ("EnemySup", "Hook Line"),
-    ("#DP1", "#XQZ7"),
-    ("#DP2", "#QWV3"),
+    ("#RR1", "#XQZ7"),
+    ("#RR2", "#QWV3"),
 ];
 
 fn real_fixture() -> Fixture {
@@ -44,13 +44,13 @@ fn real_fixture() -> Fixture {
         text = text.replace(synthetic, real);
     }
     text = text
-        .replace("\"DP1\"", "\"XQZ7\"")
-        .replace("\"DP2\"", "\"QWV3\"");
+        .replace("\"RR1\"", "\"XQZ7\"")
+        .replace("\"RR2\"", "\"QWV3\"");
     Fixture::parse(&text).unwrap()
 }
 
 fn temp_dir(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("downplayed-record-{name}-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("riftreel-record-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     dir
 }
@@ -202,7 +202,7 @@ async fn records_a_match_as_a_pseudonymised_fixture() {
     // The recording replays exactly like the match, and the League client files give
     // the result from the end-of-game stats.
     let fixture = Fixture::load(&recorded.fixture).unwrap();
-    assert_eq!(fixture.activeplayer["riotId"], "Downplayer#DP1");
+    assert_eq!(fixture.activeplayer["riotId"], "Reeler#RR1");
     let config = SessionConfig {
         markers: MarkerConfig::default().with_extras(),
         ..SessionConfig::default()

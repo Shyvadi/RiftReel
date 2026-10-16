@@ -1,10 +1,10 @@
 <#
 .SYNOPSIS
-  Downloads the pinned LGPL ffmpeg build Downplayed records with, checks its SHA-256 and
-  installs ffmpeg.exe with its license where Downplayed looks for it.
+  Downloads the pinned LGPL ffmpeg build RiftReel records with, checks its SHA-256 and
+  installs ffmpeg.exe with its license where RiftReel looks for it.
 
 .DESCRIPTION
-  Downplayed captures with ffmpeg's `ddagrab` filter (Desktop Duplication, nothing
+  RiftReel captures with ffmpeg's `ddagrab` filter (Desktop Duplication, nothing
   injected into the game) and a hardware encoder (NVENC, AMF or QSV). The ffmpeg 5.1
   "essentials" builds have no ddagrab, and GPL builds include x264, so the repository pins
   one LGPL build from https://github.com/BtbN/FFmpeg-Builds instead of using whatever
@@ -58,7 +58,7 @@ $Url = "https://github.com/BtbN/FFmpeg-Builds/releases/download/$Release/$Asset"
 $ExeName = 'ffmpeg-x86_64-pc-windows-msvc.exe'
 $LicenseDirName = 'ffmpeg-license'
 $StampName = 'ffmpeg.stamp'
-# What Downplayed needs from the build.
+# What RiftReel needs from the build.
 $RequiredFilters = @('ddagrab')
 $HardwareEncoders = @('h264_nvenc', 'hevc_nvenc', 'av1_nvenc', 'h264_amf', 'hevc_amf', 'h264_qsv', 'hevc_qsv')
 
@@ -89,7 +89,7 @@ if (-not $Force -and $stamp -and $stamp['archive_sha256'] -eq $Sha256 -and (Test
     exit 0
 }
 
-$work = Join-Path ([IO.Path]::GetTempPath()) ('downplayed-ffmpeg-' + [guid]::NewGuid().ToString('N'))
+$work = Join-Path ([IO.Path]::GetTempPath()) ('riftreel-ffmpeg-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $work | Out-Null
 try {
     $zip = Join-Path $work $Asset
@@ -130,21 +130,21 @@ try {
     }
     $present = @($HardwareEncoders | Where-Object { $encoders -match "\s$_\s" })
     if ($encoders -match '\slibx264\s') {
-        throw 'this ffmpeg build includes libx264 (GPL); Downplayed ships an LGPL build'
+        throw 'this ffmpeg build includes libx264 (GPL); RiftReel ships an LGPL build'
     }
 
     New-Item -ItemType Directory -Force -Path $licenseDir | Out-Null
     Move-Item -Force -LiteralPath $newExe -Destination $exePath
     Move-Item -Force -LiteralPath $newLicense -Destination (Join-Path $licenseDir 'LICENSE.txt')
     $source = @(
-        "FFmpeg for Downplayed",
+        "FFmpeg for RiftReel",
         "",
         "Build:   $Asset",
         "From:    $Url",
         "SHA-256: $Sha256",
         "Version: $version",
         "",
-        "This is an LGPL build of FFmpeg (see LICENSE.txt in this folder), run by Downplayed",
+        "This is an LGPL build of FFmpeg (see LICENSE.txt in this folder), run by RiftReel",
         "as a separate program. FFmpeg's source for this build is commit $SourceCommit of",
         "https://git.ffmpeg.org/ffmpeg.git (mirror: https://github.com/FFmpeg/FFmpeg/commit/$SourceCommit).",
         "The scripts that configured and built it, and the sources of the libraries it",

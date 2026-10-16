@@ -1,7 +1,7 @@
 //! Riot Live Client events → highlight markers (doc 02 §B2, doc 03 §4.3).
 //!
 //! Every marker is stamped with Riot's `EventTime`, not the time we received it.
-//! Pre/post-roll windows default to Outplayed's observed values; the Downplayed
+//! Pre/post-roll windows default to Outplayed's observed values; the RiftReel
 //! additions (Voidgrubs, first blood, ace, shutdown, sprees) are off by default.
 
 use std::collections::{BTreeMap, HashSet};
@@ -74,7 +74,7 @@ impl MarkerKind {
         Self::ALL.into_iter().find(|kind| kind.as_str() == value)
     }
 
-    /// Outplayed's windows for its highlight set (doc 02 §A3); Downplayed's additions
+    /// Outplayed's windows for its highlight set (doc 02 §A3); RiftReel's additions
     /// are 10 s / 5 s and off by default.
     pub fn default_window(self) -> MarkerWindow {
         match self {
@@ -276,7 +276,7 @@ impl MarkerConfig {
         self.windows.insert(kind, window);
     }
 
-    /// Turns on the Downplayed additions: Voidgrubs, first blood, ace, shutdown and
+    /// Turns on the RiftReel additions: Voidgrubs, first blood, ace, shutdown and
     /// spree markers.
     pub fn with_extras(mut self) -> Self {
         for kind in [
@@ -696,15 +696,15 @@ mod tests {
     use super::*;
     use crate::league::models::Player;
 
-    const ME: &str = "Downplayer";
+    const ME: &str = "Reeler";
 
     fn me() -> PlayerIdentity {
-        PlayerIdentity::new(Some("Downplayer#DP1"), Some(ME), Some("Downplayer#DP1"))
+        PlayerIdentity::new(Some("Reeler#RR1"), Some(ME), Some("Reeler#RR1"))
     }
 
     fn roster() -> Roster {
         let player = |game: &str, team: &str| Player {
-            riot_id: Some(format!("{game}#DP1")),
+            riot_id: Some(format!("{game}#RR1")),
             riot_id_game_name: Some(game.into()),
             team: team.into(),
             champion_name: "Champ".into(),

@@ -1,11 +1,11 @@
-# Builds Downplayed for everyday use (release, its UI inside) and installs it for this
-# Windows user in %LOCALAPPDATA%\Programs\Downplayed, with ffmpeg and its license beside
-# it and a "Downplayed" Start menu shortcut carrying the app's id (Windows notifications
+# Builds RiftReel for everyday use (release, its UI inside) and installs it for this
+# Windows user in %LOCALAPPDATA%\Programs\RiftReel, with ffmpeg and its license beside
+# it and a "RiftReel" Start menu shortcut carrying the app's id (Windows notifications
 # need it, and a taskbar pin made from it groups with the window).
 #
 # Run it again after changes. Windows won't overwrite a program while it runs, but it
-# will rename it: a running Downplayed (or a recording's ffmpeg) keeps going from the old
-# file and the next start is the new build. Quit Downplayed from the tray and open it
+# will rename it: a running RiftReel (or a recording's ffmpeg) keeps going from the old
+# file and the next start is the new build. Quit RiftReel from the tray and open it
 # again to switch. -NoBuild installs what is already built.
 #
 # Needs the ffmpeg from tools/fetch-ffmpeg.ps1. On a machine whose newest MSVC toolset is
@@ -13,12 +13,12 @@
 param([switch]$NoBuild)
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent $PSScriptRoot
-$dest = Join-Path $env:LOCALAPPDATA 'Programs\Downplayed'
+$dest = Join-Path $env:LOCALAPPDATA 'Programs\RiftReel'
 $config = Get-Content (Join-Path $repo 'src-tauri\tauri.conf.json') -Raw | ConvertFrom-Json
 $binaries = Join-Path $repo 'src-tauri\binaries'
 $ffmpeg = Join-Path $binaries 'ffmpeg-x86_64-pc-windows-msvc.exe'
 if (-not (Test-Path $ffmpeg)) { throw 'No ffmpeg: run tools/fetch-ffmpeg.ps1 first.' }
-$built = Join-Path $repo 'target\release\downplayed.exe'
+$built = Join-Path $repo 'target\release\riftreel.exe'
 
 if (-not $NoBuild) {
     & npm --prefix (Join-Path $repo 'ui') run build
@@ -53,21 +53,21 @@ function Install-File([string]$from, [string]$name) {
     Copy-Item $from $to
 }
 
-Install-File $built 'downplayed.exe'
+Install-File $built 'riftreel.exe'
 Install-File $ffmpeg 'ffmpeg.exe'
 foreach ($file in 'LICENSE.txt', 'SOURCE.txt') {
     Install-File (Join-Path $binaries "ffmpeg-license\$file") "ffmpeg-license\$file"
 }
 
 # A shortcut with System.AppUserModel.ID set: WScript.Shell can't set it, so COM it is.
-if (-not ('DownplayedShortcut' -as [type])) {
+if (-not ('RiftReelShortcut' -as [type])) {
     Add-Type -TypeDefinition @'
 using System;
 using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.ComTypes;
 using System.Text;
 
-public static class DownplayedShortcut
+public static class RiftReelShortcut
 {
     [ComImport, Guid("00021401-0000-0000-C000-000000000046")]
     class ShellLink { }
@@ -171,11 +171,11 @@ public static class DownplayedShortcut
 '@
 }
 
-$exe = Join-Path $dest 'downplayed.exe'
-$shortcut = Join-Path ([Environment]::GetFolderPath('Programs')) 'Downplayed.lnk'
-[DownplayedShortcut]::Create($shortcut, $exe, $dest, $config.bundle.shortDescription, $config.identifier)
+$exe = Join-Path $dest 'riftreel.exe'
+$shortcut = Join-Path ([Environment]::GetFolderPath('Programs')) 'RiftReel.lnk'
+[RiftReelShortcut]::Create($shortcut, $exe, $dest, $config.bundle.shortDescription, $config.identifier)
 
-"Installed Downplayed $($config.version) in $dest"
-"Start menu shortcut $shortcut (app id $([DownplayedShortcut]::AppIdOf($shortcut)))"
-$running = Get-Process downplayed -ErrorAction SilentlyContinue | Where-Object { $_.Path -like "$dest\*" }
-if ($running) { 'Downplayed is running: quit it from the tray and open it again for this build.' }
+"Installed RiftReel $($config.version) in $dest"
+"Start menu shortcut $shortcut (app id $([RiftReelShortcut]::AppIdOf($shortcut)))"
+$running = Get-Process riftreel -ErrorAction SilentlyContinue | Where-Object { $_.Path -like "$dest\*" }
+if ($running) { 'RiftReel is running: quit it from the tray and open it again for this build.' }

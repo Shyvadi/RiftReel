@@ -1,6 +1,6 @@
-# Downplayed — clean-room blueprint (League of Legends only)
+# RiftReel — clean-room blueprint (League of Legends only)
 
-Downplayed is a lightweight, local-first League of Legends clip recorder for Windows.
+RiftReel is a lightweight, local-first League of Legends clip recorder for Windows.
 It reproduces what Outplayed's LoL tracker does for the player (auto-detect matches,
 record, mark kills/deaths/objectives, cut highlights, manage storage) without Overwolf,
 ads, telemetry, remotely loaded code or a stack of Chromium windows.
@@ -37,7 +37,7 @@ these behaviors and from Riot's public interfaces, not from Outplayed's code or 
 - Anything Riot's policies forbid: no information the client doesn't show the player,
   no de-anonymizing hidden players, no gameplay automation.
 - Global keyboard/mouse hooks by default (Outplayed ships a low-level keyboard hook
-  plugin; Downplayed uses `RegisterHotKey` instead).
+  plugin; RiftReel uses `RegisterHotKey` instead).
 
 ---
 
@@ -45,7 +45,7 @@ these behaviors and from Riot's public interfaces, not from Outplayed's code or 
 
 Observed in the REA investigation (details and evidence IDs in doc 01):
 
-| Outplayed / Overwolf behavior | Downplayed decision |
+| Outplayed / Overwolf behavior | RiftReel decision |
 |---|---|
 | Runs inside the Overwolf client (CEF/Chromium). The manifest declares 9 windows, and each window loads the shared `dependencies.js` plus its own bundle (`index.js` alone is 5.1 MB). | Single Rust core. One WebView2 window, created on demand and **destroyed** when closed. |
 | Background page is always on with `background_optimization: false`. | Core is event-driven and idle-polls only the cheap foreground/LCU state. |
@@ -65,7 +65,7 @@ Observed in the REA investigation (details and evidence IDs in doc 01):
 ## 3. Architecture
 
 ```
-┌──────────────────────────── downplayed.exe (Rust, Tauri 2) ────────────────────────────┐
+┌──────────────────────────── riftreel.exe (Rust, Tauri 2) ────────────────────────────┐
 │                                                                                        │
 │  tray + lifecycle ── settings (TOML) ── hotkeys (RegisterHotKey)                       │
 │                                                                                        │
@@ -99,7 +99,7 @@ Outplayed gets League data from Overwolf's Game Events Provider. It requests the
 `kill, death, assist, summoner_info, game_mode, announcer, matchState, abilities,
 live_client_data, match_info, me` (observed in logs, doc 02 §1). GEP's
 `live_client_data` feature is Riot's own Live Client Data API relayed through
-Overwolf, so Downplayed goes to the source.
+Overwolf, so RiftReel goes to the source.
 
 ### 4.1 Match lifecycle — League Client (LCU)
 
@@ -137,7 +137,7 @@ Overwolf, so Downplayed goes to the source.
   `InhibRespawningSoon` and `InhibRespawned` are also emitted. Voidgrubs arrive as
   `HordeKill` (one per grub, `KillerName`/`Assisters`/`Stolen` like `HeraldKill`;
   confirmed in a live game on 2026-10-15). Other newer objectives need verification
-  against a live dump (`downplayed-dev record`). Atakhan has been removed from the game,
+  against a live dump (`riftreel-dev record`). Atakhan has been removed from the game,
   so don't map it.
 
 ### 4.3 Event normalization (Outplayed parity)
@@ -154,13 +154,13 @@ observed windows:
 | `dragon_kill` / `rift_herald` / `baron_kill` | `DragonKill` / `HeraldKill` / `BaronKill` (KillerName = me, or team, configurable) | 10 s | 5 s |
 | `victory` | `GameEnd` Result = Win | 10 s | 1 s |
 | `ultimate` (optional, off) | No official source (GEP `abilities`). Optional raw-input R-key heuristic while League is focused | 5 s | 5 s |
-| *Downplayed additions (default off):* `voidgrubs`, `first_blood`, `ace`, `shutdown`, sprees | `HordeKill` (as objectives above; labelled just below `rift_herald`), `FirstBlood`, `Ace`; sprees/shutdowns derived from the kill sequence (`tracker::streaks`) | 10 s | 5 s |
+| *RiftReel additions (default off):* `voidgrubs`, `first_blood`, `ace`, `shutdown`, sprees | `HordeKill` (as objectives above; labelled just below `rift_herald`), `FirstBlood`, `Ace`; sprees/shutdowns derived from the kill sequence (`tracker::streaks`) | 10 s | 5 s |
 
 Outplayed's League highlight set is exactly kill, assist, death, victory, ultimate,
 baron, dragon, herald, turret and inhibitor (`background.js:27788`). The last row
-lists extras Downplayed can offer because it sees the full Riot event stream.
+lists extras RiftReel can offer because it sees the full Riot event stream.
 
-**Where Downplayed deliberately differs from Outplayed's tracker** (doc 02 Part A):
+**Where RiftReel deliberately differs from Outplayed's tracker** (doc 02 Part A):
 
 - **Timestamps:** use Riot `EventTime` with clock alignment (§4.4). Outplayed stamps
   events on *receipt* (`Date.now()`), so clip windows drift by the GEP relay latency.
@@ -227,7 +227,7 @@ offset across API hiccups.
   Outplayed records per-source tracks: League process audio on track 1, mic on 2,
   Discord/Spotify/Chrome on 3–5. It then re-muxes every finished clip through the
   plugin's `CreateMuxedFirstAudioTrack` to add a mixed track 0. That is an extra
-  full-file read/write per clip, which Downplayed avoids.
+  full-file read/write per clip, which RiftReel avoids.
 - **Upgrade path if profiling demands it:** in-process Windows.Graphics.Capture +
   Media Foundation encoder (one process, window-scoped capture). Don't start there.
 
@@ -236,7 +236,7 @@ offset across API hiccups.
 ## 6. Capture modes
 
 Outplayed's values are `highlights | fullMatch | fullSession | manual`; League is set to
-`fullMatch` on this machine, and that is the only mode Downplayed has (decided with the
+`fullMatch` on this machine, and that is the only mode RiftReel has (decided with the
 user, 2026-10-16):
 
 - **During the game:** record GameStart → GameEnd (plus the end screen) to `match.mp4`,
@@ -292,10 +292,10 @@ check with nothing changed 37 ms, a page of 100 in 2–5 ms. Outplayed writes **
 sidecar files**. All match metadata lives in the CEF
 profile's IndexedDB `MediaDatabase` (v17, store `matches`), migrated from older
 localStorage `MATCH_*` keys. The `D:\Outplayed\Recovered\outplayed-library-db-backup`
-folder on this machine shows that database has needed recovery before. Downplayed
+folder on this machine shows that database has needed recovery before. RiftReel
 should never depend on a single database file.
 
-**Outplayed importer** (Storage, or `downplayed-dev outplayed <folder>`): it walks
+**Outplayed importer** (Storage, or `riftreel-dev outplayed <folder>`): it walks
 `<root>\League of Legends\League of Legends_<M-D-YYYY>_<h-m-s-ms>\*.mp4` and adds each
 video *by reference*: a match folder (`<UTC date>_<time>_Outplayed[_<champion>]`) whose
 `match.json` has `"source": "outplayed"`, the import's id and the video's full path, so
@@ -349,7 +349,7 @@ in 2.8 s.
   folders without a single file (once an hour old).
 - The Storage view shows what the library takes and the free space, plus a dry run of
   the limits being edited: each video the cleanup would remove and the space freed.
-  `downplayed-dev cleanup` prints the same dry run. The cleanup's notes (flagged videos,
+  `riftreel-dev cleanup` prints the same dry run. The cleanup's notes (flagged videos,
   last run) are `cleanup.json` in the library's root.
 - Low-disk guard: no recording starts with less than `min_free_gb` (20) free on the
   library's drive, and one stops cleanly, keeping its file, below `stop_free_gb` (2).
@@ -362,11 +362,11 @@ in 2.8 s.
 
 ## 9. UI (single window, on demand)
 
-One window, created when Downplayed is opened (1360×880, or nine tenths of a smaller
+One window, created when RiftReel is opened (1360×880, or nine tenths of a smaller
 screen; Ctrl + / Ctrl - zoom it) and destroyed when closed. A sidebar holds the mark, the
 pages (Matches, Storage) and the live status (tracker, recorder, League client); the page
 fills the rest. Type starts at 16 px, controls are 40 px tall, and icons are line
-drawings of Downplayed's own. The app icon (`tools/make-icons.py`, `icons/source.svg`) is a
+drawings of RiftReel's own. The app icon (`tools/make-icons.py`, `icons/source.svg`) is a
 white "D" whose counter is a play button on a teal-to-blue tile; at 20 px and under, and
 in the tray, the tile carries the play button alone.
 
@@ -398,7 +398,7 @@ Make the fetch opt-in so the app works fully offline.
 | UI open | + WebView2 (~100–150 MB), freed on close |
 
 Verify with a scripted 30-minute Practice Tool session. Sample `Get-Process` for
-downplayed and ffmpeg every 5 s, check the ffmpeg drop/lag counters, and compare
+riftreel and ffmpeg every 5 s, check the ffmpeg drop/lag counters, and compare
 against the same session under Overwolf + Outplayed. That comparison is the one runtime
 measurement this investigation did not perform (doc 01 §9).
 
@@ -413,13 +413,13 @@ measurement this investigation did not perform (doc 01 §9).
 - Overwolf GEP is proprietary and not used. All game data comes from Riot's local
   interfaces.
 - ffmpeg: ship an LGPL build as a separate executable with its license and source
-  offer. Avoid GPL-only parts (x264) unless Downplayed itself is GPL. The same applies
+  offer. Avoid GPL-only parts (x264) unless RiftReel itself is GPL. The same applies
   if you ever embed libobs (GPL-2.0).
 - Riot: follow the Developer Portal policies quoted in doc 02 §6. Register the product
   if you distribute it, and show the standard "not endorsed by Riot Games" notice.
   The LCU API is unsupported and can change without notice.
-- Name/branding: keep Downplayed visually distinct from Outplayed (logo, colors,
-  layout). "Downplayed" is a play on "Outplayed"; get advice before publishing
+- Name/branding: keep RiftReel visually distinct from Outplayed (logo, colors,
+  layout). "RiftReel" is a play on "Outplayed"; get advice before publishing
   commercially.
 
 ---
@@ -438,7 +438,7 @@ measurement this investigation did not perform (doc 01 §9).
 Proposed repo layout:
 
 ```
-Downplayed/
+RiftReel/
   src-tauri/src/{main.rs, tray.rs, settings.rs, overlay.rs}
   src-tauri/src/league/{client.rs, live.rs, models.rs}
   src-tauri/src/tracker/{normalize.rs, streaks.rs, moments.rs, clock.rs}

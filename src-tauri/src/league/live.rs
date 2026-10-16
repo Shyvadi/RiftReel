@@ -1,6 +1,6 @@
 //! Client for Riot's Live Client Data API, `https://127.0.0.1:2999/liveclientdata/*`.
 //!
-//! The API is only up while a match runs, and it is official and documented. Downplayed
+//! The API is only up while a match runs, and it is official and documented. RiftReel
 //! reads `eventdata` (every [`EVENT_POLL_INTERVAL`]), `activeplayer`, `playerlist` and
 //! `gamestats`. [`EventCursor`] turns the full history `eventdata` returns into a
 //! stream of new events.

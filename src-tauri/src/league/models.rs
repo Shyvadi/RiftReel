@@ -1,6 +1,6 @@
 //! Wire types for Riot's local APIs.
 //!
-//! Only the fields Downplayed uses are modelled. Unknown fields are ignored, so Riot
+//! Only the fields RiftReel uses are modelled. Unknown fields are ignored, so Riot
 //! adding fields doesn't break parsing. Types that hold Riot identifiers print
 //! pseudonyms in `Debug` (see [`crate::privacy`]).
 

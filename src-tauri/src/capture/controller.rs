@@ -1177,7 +1177,7 @@ mod tests {
 
     fn setup(name: &str, backend: Arc<FakeBackend>, enabled: bool) -> Setup {
         let dir =
-            std::env::temp_dir().join(format!("downplayed-capture-{name}-{}", std::process::id()));
+            std::env::temp_dir().join(format!("riftreel-capture-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let config = CaptureConfig {
             enabled,
@@ -1576,7 +1576,7 @@ mod tests {
     async fn audio_rides_along_and_is_moved_into_sync() {
         let backend = FakeBackend::new(vec![]);
         let dir =
-            std::env::temp_dir().join(format!("downplayed-capture-audio-{}", std::process::id()));
+            std::env::temp_dir().join(format!("riftreel-capture-audio-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let sources = vec![
             SourceConfig {
@@ -1640,7 +1640,7 @@ mod tests {
     async fn a_start_that_fails_with_audio_retries_without_it() {
         let backend = FakeBackend::new(vec![Script::NoFrames]);
         let dir =
-            std::env::temp_dir().join(format!("downplayed-capture-noaudio-{}", std::process::id()));
+            std::env::temp_dir().join(format!("riftreel-capture-noaudio-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let config = CaptureConfig {
             enabled: true,

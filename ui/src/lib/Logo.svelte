@@ -1,5 +1,5 @@
 <script>
-  /** Downplayed's mark, as in src-tauri/icons/source.svg. */
+  /** RiftReel's mark, as in src-tauri/icons/source.svg. */
   let { size = 36 } = $props();
   const gradient = `logo-${Math.random().toString(36).slice(2)}`;
 </script>
@@ -15,6 +15,6 @@
   <path
     fill="#fff"
     fill-rule="evenodd"
-    d="M324 263H492A249 249 0 0 1 492 761H324A49 49 0 0 1 275 712V312A49 49 0 0 1 324 263ZM407 416V608Q407 633 429 621L597 524Q618 512 597 500L429 403Q407 391 407 416Z"
+    d="M324 263H541A172 172 0 0 1 627.3 583.8L741 761H583L484.2 607H410V761H324A49 49 0 0 1 275 712V312A49 49 0 0 1 324 263ZM430 378V492Q430 514 449 503L548 446Q567 435 548 424L449 367Q430 356 430 378Z"
   />
 </svg>

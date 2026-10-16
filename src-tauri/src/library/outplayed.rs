@@ -1,6 +1,6 @@
 //! The Outplayed importer (doc 03 §7). An Outplayed library keeps League videos as
 //! `<root>\League of Legends\League of Legends_<M-D-YYYY>_<h-m-s-ms>\*.mp4`; each becomes a
-//! match in Downplayed's library *by reference*: a folder with a `match.json` that points
+//! match in RiftReel's library *by reference*: a folder with a `match.json` that points
 //! at the video where it is. Nothing under the Outplayed folder is ever written, moved or
 //! deleted, and the cleanup leaves an import's videos alone unless the user allows it for
 //! that import.
@@ -363,7 +363,7 @@ fn count(value: &Value) -> Option<u64> {
 
 /// Markers from a video's events: kills (a multikill by its label), assists, deaths and
 /// the victory, at `time` ms into the video with Outplayed's `timing` as the pre- and
-/// post-roll. Other events (ultimates, arena rounds…) have no marker in Downplayed.
+/// post-roll. Other events (ultimates, arena rounds…) have no marker in RiftReel.
 fn markers(events: &[Value]) -> Vec<Marker> {
     let mut markers: Vec<Marker> = events
         .iter()
@@ -1017,7 +1017,7 @@ mod tests {
         }
 
         let dir = std::env::temp_dir().join(format!(
-            "downplayed-outplayed-export-{}",
+            "riftreel-outplayed-export-{}",
             std::process::id()
         ));
         std::fs::create_dir_all(&dir).unwrap();
@@ -1118,7 +1118,7 @@ mod tests {
     #[test]
     fn videos_are_imported_by_reference_once_and_never_touched() {
         let base =
-            std::env::temp_dir().join(format!("downplayed-outplayed-{}", std::process::id()));
+            std::env::temp_dir().join(format!("riftreel-outplayed-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&base);
         let root = base.join("Outplayed");
         outplayed(&root);
@@ -1214,7 +1214,7 @@ mod tests {
     #[test]
     fn the_cleanup_leaves_imports_alone_unless_allowed_for_them() {
         let base = std::env::temp_dir().join(format!(
-            "downplayed-outplayed-janitor-{}",
+            "riftreel-outplayed-janitor-{}",
             std::process::id()
         ));
         let _ = std::fs::remove_dir_all(&base);

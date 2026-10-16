@@ -5,12 +5,12 @@ mod support;
 
 use std::collections::HashSet;
 
-use downplayed_lib::league::live::{LiveClient, LiveError};
-use downplayed_lib::league::tls::riot_client_config;
-use downplayed_lib::replay::{replay, Fixture};
-use downplayed_lib::tracker::machine::EndReason;
-use downplayed_lib::tracker::normalize::{GameResult, Marker};
-use downplayed_lib::tracker::session::{MatchSession, SessionConfig};
+use riftreel_lib::league::live::{LiveClient, LiveError};
+use riftreel_lib::league::tls::riot_client_config;
+use riftreel_lib::replay::{replay, Fixture};
+use riftreel_lib::tracker::machine::EndReason;
+use riftreel_lib::tracker::normalize::{GameResult, Marker};
+use riftreel_lib::tracker::session::{MatchSession, SessionConfig};
 use support::{load_fixture, FakeLiveServer, TestPki};
 
 /// Default markers for `ranked_win.json`: (label, EventTime, riot event IDs).
@@ -93,8 +93,8 @@ async fn reads_every_endpoint_over_verified_https() {
     server.set_game_time(1300.0);
 
     let me = live.active_player().await.unwrap();
-    assert_eq!(me.riot_id.as_deref(), Some("Downplayer#DP1"));
-    assert_eq!(live.active_player_name().await.unwrap(), "Downplayer#DP1");
+    assert_eq!(me.riot_id.as_deref(), Some("Reeler#RR1"));
+    assert_eq!(live.active_player_name().await.unwrap(), "Reeler#RR1");
     assert_eq!(live.player_list().await.unwrap().len(), 10);
     let stats = live.game_stats().await.unwrap();
     assert_eq!(

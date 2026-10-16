@@ -168,9 +168,9 @@ mod tests {
 
     #[test]
     fn pseudonyms_are_stable_and_case_insensitive() {
-        assert_eq!(pseudonym("Downplayer"), pseudonym(" downplayer "));
-        assert_ne!(pseudonym("Downplayer"), pseudonym("Someone Else"));
-        assert!(!format!("{:?}", Redacted("Downplayer")).contains("Downplayer"));
+        assert_eq!(pseudonym("Reeler"), pseudonym(" reeler "));
+        assert_ne!(pseudonym("Reeler"), pseudonym("Someone Else"));
+        assert!(!format!("{:?}", Redacted("Reeler")).contains("Reeler"));
     }
 
     #[test]

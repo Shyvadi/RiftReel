@@ -13,22 +13,22 @@ use std::time::{Duration, Instant};
 use futures_util::future::BoxFuture;
 use tokio::sync::{mpsc, oneshot, watch};
 
-use downplayed_lib::capture::audio::{AudioRun, SourceConfig};
-use downplayed_lib::capture::controller::{CaptureBackend, CaptureTimings};
-use downplayed_lib::capture::display::Display;
-use downplayed_lib::capture::ffmpeg::{CapturePlan, CaptureRun, ExitReport, Progress};
-use downplayed_lib::capture::{CaptureConfig, CaptureController, CaptureState};
-use downplayed_lib::league::client::{LcuError, LeagueClient};
-use downplayed_lib::league::live::LiveClient;
-use downplayed_lib::league::models::{EogStatsBlock, GameflowPhase, GameflowSession};
-use downplayed_lib::library::Library;
-use downplayed_lib::settings::Settings;
-use downplayed_lib::tracker::machine::{EndReason, TrackerState};
-use downplayed_lib::tracker::normalize::{GameResult, Kda};
-use downplayed_lib::tracker::runtime::{
+use riftreel_lib::capture::audio::{AudioRun, SourceConfig};
+use riftreel_lib::capture::controller::{CaptureBackend, CaptureTimings};
+use riftreel_lib::capture::display::Display;
+use riftreel_lib::capture::ffmpeg::{CapturePlan, CaptureRun, ExitReport, Progress};
+use riftreel_lib::capture::{CaptureConfig, CaptureController, CaptureState};
+use riftreel_lib::league::client::{LcuError, LeagueClient};
+use riftreel_lib::league::live::LiveClient;
+use riftreel_lib::league::models::{EogStatsBlock, GameflowPhase, GameflowSession};
+use riftreel_lib::library::Library;
+use riftreel_lib::settings::Settings;
+use riftreel_lib::tracker::machine::{EndReason, TrackerState};
+use riftreel_lib::tracker::normalize::{GameResult, Kda};
+use riftreel_lib::tracker::runtime::{
     RuntimeEvent, Timings, TrackerConfig, TrackerRuntime, TrackerStatus,
 };
-use downplayed_lib::tracker::session::{MatchFilters, MatchSummary, ResultSource, SkipReason};
+use riftreel_lib::tracker::session::{MatchFilters, MatchSummary, ResultSource, SkipReason};
 use support::{eventually, load_fixture, load_json, FakeLiveServer, TestPki};
 
 const WAIT: Duration = Duration::from_secs(10);
@@ -347,7 +347,7 @@ async fn events_may_resume_before_the_client_reports_the_reconnect() {
 #[tokio::test]
 async fn league_client_appearing_mid_match_adds_its_details() {
     let mut h = Harness::start("ranked_win", Settings::default().tracker_config()).await;
-    // Downplayed started mid-game, before it reached the client: degraded start.
+    // RiftReel started mid-game, before it reached the client: degraded start.
     h.send(RuntimeEvent::GameProcess(true)).await;
     h.server.set_game_time(600.0);
     h.server.set_up(true);
@@ -432,7 +432,7 @@ async fn filtered_modes_are_not_tracked() {
     assert_eq!(
         status.current.unwrap().skipped,
         Some(SkipReason::Filtered(
-            downplayed_lib::tracker::session::ModeClass::Aram
+            riftreel_lib::tracker::session::ModeClass::Aram
         ))
     );
 
@@ -580,7 +580,7 @@ impl CaptureBackend for FakeCapture {
 
 fn capture_dir(name: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!(
-        "downplayed-e2e-capture-{name}-{}",
+        "riftreel-e2e-capture-{name}-{}",
         std::process::id()
     ));
     let _ = std::fs::remove_dir_all(&dir);

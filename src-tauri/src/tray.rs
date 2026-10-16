@@ -10,7 +10,7 @@ use crate::settings::AppPaths;
 use crate::tracker::machine::TrackerState;
 use crate::tracker::runtime::TrackerStatus;
 
-const TRAY_ID: &str = "downplayed";
+const TRAY_ID: &str = "riftreel";
 pub(crate) const MAIN_WINDOW: &str = "main";
 
 /// Menu items updated as the tracker state changes.
@@ -26,13 +26,13 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
         false,
         None::<&str>,
     )?;
-    let open = MenuItem::with_id(app, "open", "Open Downplayed", true, None::<&str>)?;
+    let open = MenuItem::with_id(app, "open", "Open RiftReel", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
     let separator = PredefinedMenuItem::separator(app)?;
     let menu = Menu::with_items(app, &[&status, &separator, &open, &quit])?;
 
     let mut tray = TrayIconBuilder::with_id(TRAY_ID)
-        .tooltip("Downplayed")
+        .tooltip("RiftReel")
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id().as_ref() {
@@ -101,7 +101,7 @@ pub fn create_main_window(app: &AppHandle, visible: bool) {
     }
     let mut builder =
         WebviewWindowBuilder::new(app, MAIN_WINDOW, WebviewUrl::App("index.html".into()))
-            .title("Downplayed")
+            .title("RiftReel")
             .inner_size(width, height)
             .min_inner_size(960.0, 600.0)
             .center()
@@ -120,7 +120,7 @@ pub fn create_main_window(app: &AppHandle, visible: bool) {
 pub fn show_status(app: &AppHandle, status: &TrackerStatus) {
     let text = status_text(status);
     if let Some(tray) = app.tray_by_id(TRAY_ID) {
-        let _ = tray.set_tooltip(Some(format!("Downplayed · {text}")));
+        let _ = tray.set_tooltip(Some(format!("RiftReel · {text}")));
     }
     if let Some(items) = app.try_state::<TrayItems>() {
         let _ = items.status.set_text(text);

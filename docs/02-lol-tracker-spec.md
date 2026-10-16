@@ -1,13 +1,13 @@
-# League of Legends tracker: what Outplayed does, and what Downplayed does instead
+# League of Legends tracker: what Outplayed does, and what RiftReel does instead
 
-This is the critical spec for Downplayed.
+This is the critical spec for RiftReel.
 
 - **Part A** documents Outplayed's League tracker as built (176.0.13334) and as it behaved
   on this machine. Labels: **[static]** (`bg:` = `background.js`, `idx:` = `index.js`),
   **[log]** (the user's Outplayed logs, 2026-09-07 → 09-29, 118 LoL sessions / 117
   saved matches), **[backup]**, **[docs]** (Overwolf/Riot developer docs),
   **[inferred]**, **[unknown]**.
-- **Part B** maps every signal to Riot's own local interfaces, which Downplayed uses
+- **Part B** maps every signal to Riot's own local interfaces, which RiftReel uses
   directly.
 
 > Privacy note: Outplayed's logs on this machine contain the player's Riot identity in
@@ -202,7 +202,7 @@ Stored in IndexedDB `MediaDatabase` (store `matches`); older builds used localSt
 
 ---
 
-## Part B: Downplayed's tracker on official Riot interfaces
+## Part B: RiftReel's tracker on official Riot interfaces
 
 ### B1. Sources
 
@@ -216,7 +216,7 @@ Stored in IndexedDB `MediaDatabase` (store `matches`); older builds used localSt
 "Me" = the active player. Match by `riotId`, then `riotIdGameName`, then `summonerName`.
 Note that `KillerName` in events is the game name without the tag (A3).
 
-| Outplayed highlight | Riot source | Downplayed derivation | Improvement over Outplayed |
+| Outplayed highlight | Riot source | RiftReel derivation | Improvement over Outplayed |
 |---|---|---|---|
 | `kill` (+ multikill label) | `ChampionKill` (KillerName = me), `Multikill` (KillStreak 2–5) | One marker per kill. A following `Multikill` relabels the moment. Cross-check with `playerlist[me].scores.kills`. | Exact Riot `EventTime` instead of receipt time; per-kill markers |
 | `assist` | `ChampionKill` (me ∈ `Assisters`) | — | — |
@@ -263,7 +263,7 @@ double > kill > objective > assist > death).
    clock mapping, EventID dedupe across a simulated reconnect.
 3. **Integration:** a fake HTTPS server on 127.0.0.1:2999 replays fixtures; assert the
    markers and clip ranges.
-4. **Parity:** for a game recorded by both apps, Downplayed's markers should be a
+4. **Parity:** for a game recorded by both apps, RiftReel's markers should be a
    superset of Outplayed's `medias[].events[]` for that match. Win/loss must match the
    client's EOG screen.
 
@@ -278,5 +278,5 @@ From developer.riotgames.com, Game Client API section:
 - The LCU API is "not officially supported" for third parties. Register or annotate the
   application in the Developer Portal.
 
-Downplayed only records what the player already saw. Don't add live enemy-tracking or
+RiftReel only records what the player already saw. Don't add live enemy-tracking or
 champ-select de-anonymization features.

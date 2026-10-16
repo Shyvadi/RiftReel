@@ -104,8 +104,8 @@
       total = result.total;
       pages[page] = result.items;
       // For profiling: when the list first had rows (DevTools' performance timeline).
-      if (!performance.getEntriesByName('downplayed:first-rows').length) {
-        performance.mark('downplayed:first-rows');
+      if (!performance.getEntriesByName('riftreel:first-rows').length) {
+        performance.mark('riftreel:first-rows');
       }
     } catch (e) {
       if (asOf === generation) error = String(e);
@@ -274,7 +274,7 @@
         <button type="button" class="btn" onclick={clear}>Clear filters</button>
       {:else}
         <p><b>No matches yet.</b></p>
-        <p class="muted">Play a game (Practice Tool works): Downplayed records it, and its review opens here afterwards.</p>
+        <p class="muted">Play a game (Practice Tool works): RiftReel records it, and its review opens here afterwards.</p>
       {/if}
     </div>
   {:else}

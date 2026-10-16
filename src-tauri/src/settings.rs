@@ -1,4 +1,4 @@
-//! User settings: one local TOML file, `%APPDATA%\Downplayed\settings.toml`. There is no
+//! User settings: one local TOML file, `%APPDATA%\RiftReel\settings.toml`. There is no
 //! remote configuration.
 
 use std::collections::BTreeMap;
@@ -25,14 +25,14 @@ pub const SETTINGS_SCHEMA: u32 = 1;
 const MAX_WINDOW_S: f64 = 180.0;
 
 const HEADER: &str = "\
-# Downplayed settings. Restart Downplayed after editing.
+# RiftReel settings. Restart RiftReel after editing.
 # Every value is optional; anything missing falls back to its default.
 # [capture]: encoder = \"auto\" probes NVENC, AMF, QSV, then the CPU once and keeps the
 #   answer; or name one (h264_nvenc, hevc_nvenc, av1_nvenc, h264_amf, h264_qsv, ...).
 #   ffmpeg_path = \"\" uses the bundled ffmpeg.
 # [capture.audio]: game_only = true records only League's sound instead of everything
 #   the output device plays; devices are matched by part of their name (\"\" = default);
-#   volumes run 0.0 to 4.0. `downplayed-dev audio` lists the devices.
+#   volumes run 0.0 to 4.0. `riftreel-dev audio` lists the devices.
 # [storage]: min_free_gb: no recording starts with less free space than this on the
 #   library's drive; stop_free_gb: a recording stops (keeping what it has) below this.
 #   cleanup = true sends full-match videos older than keep_days, then the oldest while
@@ -233,7 +233,7 @@ impl CaptureSettings {
             self.encoder = encoder;
         } else {
             warnings.push(format!(
-                "capture.encoder = {:?} is not an encoder Downplayed knows; using auto",
+                "capture.encoder = {:?} is not an encoder RiftReel knows; using auto",
                 self.encoder
             ));
             self.encoder = AUTO_ENCODER.into();
@@ -617,32 +617,32 @@ impl Settings {
     }
 }
 
-/// Where Downplayed keeps its files.
+/// Where RiftReel keeps its files.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AppPaths {
     pub settings_file: PathBuf,
     pub log_dir: PathBuf,
     /// One folder per finished match, each with its `match.json` (doc 03 §7).
     pub matches_dir: PathBuf,
-    /// Where `downplayed-dev record` saves recordings by default; the window lists them.
+    /// Where `riftreel-dev record` saves recordings by default; the window lists them.
     pub recordings_dir: PathBuf,
     /// The stored encoder probe (which encoder works on this machine).
     pub capture_probe_file: PathBuf,
 }
 
 /// Names one folder for settings, logs, matches and recordings (development, tests).
-pub const HOME_ENV: &str = "DOWNPLAYED_HOME";
+pub const HOME_ENV: &str = "RIFTREEL_HOME";
 
 impl AppPaths {
-    /// The folder `DOWNPLAYED_HOME` names, if it is set.
+    /// The folder `RIFTREEL_HOME` names, if it is set.
     pub fn development_home() -> Option<PathBuf> {
         std::env::var_os(HOME_ENV)
             .filter(|home| !home.is_empty())
             .map(PathBuf::from)
     }
 
-    /// `%APPDATA%\Downplayed\settings.toml`; logs, matches and recordings under
-    /// `%LOCALAPPDATA%\Downplayed`. `DOWNPLAYED_HOME` puts everything under one folder
+    /// `%APPDATA%\RiftReel\settings.toml`; logs, matches and recordings under
+    /// `%LOCALAPPDATA%\RiftReel`. `RIFTREEL_HOME` puts everything under one folder
     /// instead (development).
     pub fn resolve() -> Self {
         if let Some(home) = Self::development_home() {
@@ -651,10 +651,10 @@ impl AppPaths {
         let fallback = || PathBuf::from(".");
         let config_dir = dirs::config_dir()
             .unwrap_or_else(fallback)
-            .join("Downplayed");
+            .join("RiftReel");
         let data_dir = dirs::data_local_dir()
             .unwrap_or_else(fallback)
-            .join("Downplayed");
+            .join("RiftReel");
         Self {
             settings_file: config_dir.join("settings.toml"),
             ..Self::data_under(&data_dir)
@@ -685,7 +685,7 @@ mod tests {
 
     fn temp_dir(name: &str) -> PathBuf {
         let dir =
-            std::env::temp_dir().join(format!("downplayed-settings-{name}-{}", std::process::id()));
+            std::env::temp_dir().join(format!("riftreel-settings-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         dir
     }
@@ -708,7 +708,7 @@ mod tests {
     fn round_trips_through_toml() {
         let settings = Settings::default();
         let text = settings.to_toml();
-        assert!(text.starts_with("# Downplayed settings"));
+        assert!(text.starts_with("# RiftReel settings"));
         assert!(text.contains("[markers.kill]"), "{text}");
         assert_eq!(Settings::from_toml(&text).unwrap(), settings);
     }

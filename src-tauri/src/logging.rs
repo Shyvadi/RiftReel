@@ -17,12 +17,12 @@ use tracing_subscriber::EnvFilter;
 
 use crate::privacy;
 
-pub const LOG_FILE: &str = "downplayed.log";
+pub const LOG_FILE: &str = "riftreel.log";
 pub const MAX_LOG_BYTES: u64 = 5 * 1024 * 1024;
 pub const MAX_LOG_FILES: usize = 5;
 
-/// Overrides the configured level, e.g. `DOWNPLAYED_LOG=debug`.
-pub const LOG_ENV: &str = "DOWNPLAYED_LOG";
+/// Overrides the configured level, e.g. `RIFTREEL_LOG=debug`.
+pub const LOG_ENV: &str = "RIFTREEL_LOG";
 
 #[derive(Debug, thiserror::Error)]
 pub enum LogInitError {
@@ -146,7 +146,7 @@ impl Write for ScrubbingHandle {
     }
 }
 
-/// Size-based rotation: `downplayed.log`, then `downplayed.1.log` … `downplayed.{n-1}.log`.
+/// Size-based rotation: `riftreel.log`, then `riftreel.1.log` … `riftreel.{n-1}.log`.
 pub struct RotatingFile {
     dir: PathBuf,
     stem: String,
@@ -241,7 +241,7 @@ mod tests {
 
     fn temp_dir(name: &str) -> PathBuf {
         let dir =
-            std::env::temp_dir().join(format!("downplayed-log-{name}-{}", std::process::id()));
+            std::env::temp_dir().join(format!("riftreel-log-{name}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         dir
     }

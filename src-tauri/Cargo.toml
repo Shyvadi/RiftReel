@@ -1,5 +1,5 @@
 [package]
-name = "downplayed"
+name = "riftreel"
 version = "0.1.0"
 description = "Lightweight, local-first League of Legends clip recorder"
 edition.workspace = true
@@ -7,20 +7,20 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 publish = false
-default-run = "downplayed"
+default-run = "riftreel"
 
 [lib]
-name = "downplayed_lib"
+name = "riftreel_lib"
 crate-type = ["rlib"]
 
 [[bin]]
-name = "downplayed"
+name = "riftreel"
 path = "src/main.rs"
 
 # Developer tool: fixture replay, LCU phase watch, live marker printout.
 [[bin]]
-name = "downplayed-dev"
-path = "src/bin/downplayed-dev.rs"
+name = "riftreel-dev"
+path = "src/bin/riftreel-dev.rs"
 
 [build-dependencies]
 tauri-build = { version = "2.7", features = [] }
@@ -53,11 +53,11 @@ thiserror = "2"
 rusqlite = { version = "0.40.2", features = ["bundled"] }
 # The one message after a game the window can't show (low disk): a Windows notification.
 tauri-plugin-notification = "2.7.0"
-# Opening Downplayed again brings up the running one instead of a second tracker.
+# Opening RiftReel again brings up the running one instead of a second tracker.
 tauri-plugin-single-instance = "2.5.4"
 
 # Capture: the monitor League is on (DXGI adapter/output), a job object so ffmpeg never
-# outlives Downplayed, WASAPI audio, the shell for library files (Recycle Bin, clipboard,
+# outlives RiftReel, WASAPI audio, the shell for library files (Recycle Bin, clipboard,
 # Save as), and the time zone for Outplayed's local-time names. Tauri already builds this
 # version of the crate.
 [target.'cfg(windows)'.dependencies]

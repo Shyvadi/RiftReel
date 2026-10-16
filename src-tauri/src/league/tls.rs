@@ -3,7 +3,7 @@
 //! The game (`127.0.0.1:2999`) and the League client (LCU) both serve the same leaf,
 //! `CN=rclient` with SANs `localhost` and `127.0.0.1`, issued by Riot's "LoL Game
 //! Engineering Certificate Authority" (captured 2026-10-15, see `fixtures/tls/`).
-//! Downplayed trusts that one root (vendored as `certs/riotgames.pem`) and nothing
+//! RiftReel trusts that one root (vendored as `certs/riotgames.pem`) and nothing
 //! else, and verifies strictly: chain, validity, key usage and the `127.0.0.1` name.
 //! There are no system roots and no "accept invalid certificates" switch.
 
