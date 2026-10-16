@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-set-import-cleanup"
+description = "Enables the set_import_cleanup command without any pre-configured scope."
+commands.allow = ["set_import_cleanup"]
+
+[[permission]]
+identifier = "deny-set-import-cleanup"
+description = "Denies the set_import_cleanup command without any pre-configured scope."
+commands.deny = ["set_import_cleanup"]

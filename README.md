@@ -4,7 +4,7 @@ A lightweight, local-first **League of Legends** clip recorder for Windows. It i
 clean-room alternative to Overwolf's Outplayed, with no ads, no telemetry and no
 Overwolf runtime.
 
-Status: **phases 0–3 of the [blueprint](docs/03-downplayed-blueprint.md#12-roadmap)**.
+Status: **phases 0–4 of the [blueprint](docs/03-downplayed-blueprint.md#12-roadmap)**.
 The tray app, settings, scrubbed logging, Riot's local API clients and the highlight
 tracker work. Each tracked match is recorded
 to `match.mp4` beside its `match.json`, with nothing to press: an ffmpeg sidecar
@@ -22,7 +22,11 @@ thumbnail, and can be played, made a favorite, shown in Explorer, copied to the
 clipboard as a file, saved as a copy, or sent to the Recycle Bin. After each game the
 window opens on that game's review, once the game has closed. Storage shows what the
 library takes and, once turned on, the cleanup keeps the full-match videos within an age
-and a size by sending the oldest to the Recycle Bin; it shows a dry run first.
+and a size by sending the oldest to the Recycle Bin; it shows a dry run first. An
+Outplayed library's League videos can be imported where they are: they're listed,
+played and clipped like Downplayed's own, with what Outplayed's localStorage backup knew
+about them (champion, K/D/A, a win, markers), and nothing in the Outplayed folder
+changes.
 
 | Doc | What it covers |
 |---|---|
@@ -83,8 +87,10 @@ and `downplayed-dev eog` prints what Downplayed reads from the end-of-game stats
 monitors, `downplayed-dev audio` lists the sound devices, `downplayed-dev capture 30`
 records 30 seconds the way a match is recorded and prints the frame, dropped-frame and
 duplicated-frame counts and how the audio went, `downplayed-dev library [--cold]`
-times the library index (rebuilt from scratch with `--cold`) and a few list queries, and
-`downplayed-dev cleanup` prints the cleanup's dry run.
+times the library index (rebuilt from scratch with `--cold`) and a few list queries,
+`downplayed-dev cleanup` prints the cleanup's dry run, and
+`downplayed-dev outplayed D:\Outplayed` what importing an Outplayed library would add
+(`--write` imports it).
 
 > **This machine:** Visual Studio 2022 Community has a partial MSVC 14.42 toolset (no
 > headers). `cc-rs` picks it first, so building `ring` fails with "Cannot open include
@@ -101,6 +107,7 @@ times the library index (rebuilt from scratch with `--cold`) and a few list quer
 | Matches | `%LOCALAPPDATA%\Downplayed\library\League of Legends\<date>_<time>_<queue>_<champion>\` (UTC), one folder per tracked match: `match.json`, `match.mp4` when it was recorded, the clips made from it in `clips\` with their thumbnails in `thumbs\`, and its list thumbnail `thumbs\match.jpg` |
 | Library index | `%LOCALAPPDATA%\Downplayed\library\library.db`: a cache of the match folders' `match.json` files, rebuilt from them if it is lost or damaged |
 | Cleanup notes | `%LOCALAPPDATA%\Downplayed\library\cleanup.json`: videos the cleanup couldn't recycle, and its last run |
+| Imports | `%LOCALAPPDATA%\Downplayed\library\imports.json`: the Outplayed folders imported, and whether the cleanup may remove their videos. Each imported video gets a folder `<date>_<time>_Outplayed[_<champion>]` whose `match.json` points at it |
 | Encoder probe | `%LOCALAPPDATA%\Downplayed\capture-probe.json`: which encoder works here, probed once per ffmpeg binary |
 | Recordings | `%LOCALAPPDATA%\Downplayed\recordings`, where `downplayed-dev record` saves by default |
 | `DOWNPLAYED_HOME` | Put settings, logs, matches and recordings under one folder instead (development) |
@@ -127,8 +134,9 @@ The cleanup is off until turned on (`cleanup`, or the Storage view). Then, after
 match and every hour, never during a game, full-match videos older than `keep_days` (30)
 go to the Recycle Bin, then the oldest while full matches take more than
 `full_matches_gb` (150). Clips are never removed (the window warns above
-`clips_warn_gb`, 50), nor are favorites (★ in a match's review) or imported videos. A
-video too big for the Recycle Bin is never deleted: it stays, flagged in Storage.
+`clips_warn_gb`, 50), nor are favorites (★ in a match's review) or imported videos
+(unless allowed for that import in Storage). A video too big for the Recycle Bin is never
+deleted: it stays, flagged in Storage.
 `downplayed-dev cleanup` prints what the cleanup would do now.
 
 ## Layout
@@ -146,7 +154,8 @@ src-tauri/src/
                              lookup (DXGI), WASAPI audio on QPC time, clip cutting, the
                              controller that records each match
   library.rs, library/       match folders (match.json, match.mp4, clips), their SQLite
-                             index (index.rs) and the cleanup (janitor.rs)
+                             index (index.rs), the cleanup (janitor.rs) and the Outplayed
+                             importer (outplayed.rs)
   thumbnails.rs              list thumbnails, made in the background (never in game)
   shell.rs                   Recycle Bin (never deleting outright), clipboard, Save as,
                              Explorer

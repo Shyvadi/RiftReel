@@ -15,6 +15,7 @@ use std::time::{Duration, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use super::outplayed::Import;
 use super::{
     read_dir, read_json, safe_name, video_path, write_json, Library, MATCH_FILE,
     MATCH_THUMBNAIL_NAME, OUTPLAYED_SOURCE,
@@ -395,6 +396,7 @@ impl Library {
                 .and_then(|meta| meta.modified())
                 .is_ok_and(|at| now.duration_since(at).is_ok_and(|elapsed| elapsed >= age))
         };
+        let imports = self.imports();
         let mut survey = Survey::default();
         for dir in read_dir(&self.matches_dir) {
             if !dir.is_dir() {
@@ -409,7 +411,7 @@ impl Library {
                     survey
                         .orphans
                         .extend(orphans.into_iter().filter(|p| aged(p, ORPHAN_AGE)));
-                    survey.holdings.push(holding(id, &dir, &summary));
+                    survey.holdings.push(holding(id, &dir, &summary, &imports));
                 }
                 None if is_empty(&dir) && aged(&dir, EMPTY_AGE) => survey.empty.push(dir),
                 None => {}
@@ -445,7 +447,7 @@ fn is_favorite(summary: &Value) -> bool {
     summary["favorite"].as_bool().unwrap_or_default()
 }
 
-fn holding(id: String, dir: &Path, summary: &Value) -> Holding {
+fn holding(id: String, dir: &Path, summary: &Value, imports: &[Import]) -> Holding {
     let video = video_path(dir, summary)
         .and_then(|path| Some((path.clone(), std::fs::metadata(&path).ok()?.len())));
     Holding {
@@ -454,10 +456,29 @@ fn holding(id: String, dir: &Path, summary: &Value) -> Holding {
         when_ms: summary["startedWallMs"].as_i64().unwrap_or(i64::MAX),
         champion: summary["champion"].as_str().map(str::to_owned),
         favorite: is_favorite(summary),
+        managed: managed(
+            summary,
+            video.as_ref().map(|(path, _)| path.as_path()),
+            imports,
+        ),
         video,
-        managed: summary["source"].as_str() != Some(OUTPLAYED_SOURCE),
         clip_bytes: files_bytes(&dir.join(CLIPS_DIR)),
     }
+}
+
+/// Whether the cleanup may remove a match's video: Downplayed recorded it, or it was
+/// imported and the user allowed the cleanup for that import, and it is still inside the
+/// folder imported from.
+fn managed(summary: &Value, video: Option<&Path>, imports: &[Import]) -> bool {
+    if summary["source"] != OUTPLAYED_SOURCE {
+        return true;
+    }
+    let (Some(import), Some(video)) = (summary["importId"].as_str(), video) else {
+        return false;
+    };
+    imports
+        .iter()
+        .any(|i| i.id == import && i.cleanup && video.starts_with(&i.root))
 }
 
 /// The flagged videos that are still a match's video, still the janitor's to remove and

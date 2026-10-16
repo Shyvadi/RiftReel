@@ -295,11 +295,33 @@ localStorage `MATCH_*` keys. The `D:\Outplayed\Recovered\outplayed-library-db-ba
 folder on this machine shows that database has needed recovery before. Downplayed
 should never depend on a single database file.
 
-**Outplayed importer:** walk `D:\Outplayed\League of Legends\League of Legends_<MM-DD-YYYY>_<H-m-s-ms>\*.mp4`.
-If the user points at a localStorage backup (`D:\Outplayed\temp\outplayed.json`), join
-its `MATCH_<sessionId>_<n>` records (champion, K/D/A, isVictory, `medias[].events[]`
-with `time` + `timing.past/future`) to recover markers. Ignore every `owad*`, `owads_*`,
-`hashedEmails`, `__mpq_*`, experiment and remote-config key.
+**Outplayed importer** (Storage, or `downplayed-dev outplayed <folder>`): it walks
+`<root>\League of Legends\League of Legends_<M-D-YYYY>_<h-m-s-ms>\*.mp4` and adds each
+video *by reference*: a match folder (`<UTC date>_<time>_Outplayed[_<champion>]`) whose
+`match.json` has `"source": "outplayed"`, the import's id and the video's full path, so
+the list, the review and clips work on it where it is (the asset protocol is allowed that
+folder). Nothing under the Outplayed folder is ever written, moved or deleted.
+
+- The time comes from the name (local time, converted to UTC by the PC's time zone
+  rules), the length from the MP4's `mvhd` (or `mehd`), the size from the file.
+- When `<root>\temp\outplayed.json` (the localStorage backup) is there, only its
+  `MATCH_<32 hex>_<n>` keys are read. Every other key (`owad*`, `owads_*`, `hashedEmails`,
+  `__mpq_*`, `MATCH_ACTIONS_*`, …) is skipped unparsed. League records (`gameId` 5426)
+  join by file name and add the champion, K/D/A, the mode (Arena, TFT), a win
+  (`isVictory`, or a `victory` event) and markers from `medias[].events[]`: a kill with
+  its multikill label, an assist, a death, the victory, at `time` ms into the video with
+  `timing.past/future` as the pre- and post-roll. A loss is never inferred: without a win
+  the result stays unknown.
+- Importing again adds only the videos not imported yet (known by their path under the
+  root). The imports are `imports.json` in the library's root.
+- Outplayed's IndexedDB (`MediaDatabase`) isn't read: decoding Chromium's LevelDB (Snappy
+  blocks, V8-serialized values) costs more than this phase. Videos newer than the last
+  localStorage backup get their names and lengths only.
+
+On this machine (a read-only dry run): 544 League videos, 462.1 GB. The backup's 645
+League records join 80 of them (all highlight replays: 149 markers, 51 wins). The other 464
+(460 GB) are newer than the backup's last record (2025-12-17). All 544 lengths were read,
+in 2.8 s.
 
 ---
 
@@ -310,7 +332,8 @@ with `time` + `timing.past/future`) to recover markers. Ignore every `owad*`, `o
   oldest while the full matches take more than `full_matches_gb` (150 GB). Favorites
   count toward that limit but are never removed. Clips are never removed; the window
   only warns above `clips_warn_gb` (50 GB). An imported (Outplayed) video is left alone
-  unless the user allows it for that import.
+  unless the user allows it for that import, and then only while it is still inside the
+  folder it was imported from.
 - It runs after each match, once the game has closed, and every hour, never while
   `League of Legends.exe` runs: it checks every 2 s during a run and stops if a game
   starts. A run and the window's edits to matches go one at a time.

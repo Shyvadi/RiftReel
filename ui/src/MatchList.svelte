@@ -258,6 +258,7 @@
                   {#if match.multikills}<span class="tag hot">{match.multikills} multikill{match.multikills === 1 ? '' : 's'}</span>{/if}
                   {#if match.clips}<span class="tag">{match.clips} clip{match.clips === 1 ? '' : 's'}{match.favoriteClips ? ' ★' : ''}</span>{/if}
                   {#if match.source === 'recording'}<span class="tag">recording</span>{/if}
+                  {#if match.source === 'outplayed'}<span class="tag">Outplayed</span>{/if}
                 </span>
                 <span class="when muted">{when(match.whenMs)}</span>
               </button>

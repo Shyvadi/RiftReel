@@ -16,6 +16,7 @@ use crate::capture::{ffmpeg, CaptureConfig, CaptureController};
 use crate::league::client::scan_processes;
 use crate::league::live::LiveClient;
 use crate::library::janitor::{Overview, RunReport};
+use crate::library::outplayed::{Import, Survey, LEAGUE_DIR};
 use crate::library::{Facets, Library, MatchPage, MatchQuery, Removal};
 use crate::logging;
 use crate::settings::{AppPaths, LoadOutcome, Settings, SettingsError, StorageSettings};
@@ -411,6 +412,9 @@ struct StorageOverview {
     game_running: bool,
     #[serde(flatten)]
     cleanup: Overview,
+    /// Outplayed libraries imported, and where one probably is.
+    imports: Vec<Import>,
+    outplayed_folder: Option<PathBuf>,
 }
 
 /// The storage view: what the library takes, the cleanup's settings, what it left for
@@ -430,22 +434,126 @@ async fn storage_overview(
     let rules = storage.janitor_rules();
     let library = state.library.clone();
     let matches_dir = state.paths.matches_dir.clone();
-    let (cleanup, free_bytes, game_running) = tauri::async_runtime::spawn_blocking(move || {
-        (
-            library.cleanup_overview(&rules, now_ms()),
-            crate::disk::free_space(&matches_dir),
-            scan_processes().game_running,
-        )
-    })
-    .await
-    .map_err(|e| e.to_string())?;
+    let (cleanup, free_bytes, game_running, imports, outplayed_folder) =
+        tauri::async_runtime::spawn_blocking(move || {
+            (
+                library.cleanup_overview(&rules, now_ms()),
+                crate::disk::free_space(&matches_dir),
+                scan_processes().game_running,
+                library.imports(),
+                find_outplayed(),
+            )
+        })
+        .await
+        .map_err(|e| e.to_string())?;
     Ok(StorageOverview {
         settings: CleanupSettings::of(&saved),
         settings_writable: state.settings_writable,
         free_bytes,
         game_running,
         cleanup,
+        imports,
+        outplayed_folder,
     })
+}
+
+/// Where an Outplayed library probably is: its default folder, or `<drive>:\Outplayed`.
+fn find_outplayed() -> Option<PathBuf> {
+    let mut places = Vec::new();
+    if let Some(videos) = dirs::video_dir() {
+        places.push(videos.join("Overwolf").join("Outplayed"));
+        places.push(videos.join("Outplayed"));
+    }
+    places.extend(["C", "D", "E", "F"].map(|drive| PathBuf::from(format!(r"{drive}:\Outplayed"))));
+    places
+        .into_iter()
+        .find(|root| root.join(LEAGUE_DIR).is_dir())
+}
+
+/// The Outplayed library the user named: a full path with a `League of Legends` folder.
+fn outplayed_root(text: &str) -> Result<PathBuf, String> {
+    let root = PathBuf::from(text.trim().trim_matches('"'));
+    if !root.is_absolute() {
+        return Err(r"Give the Outplayed folder's full path, like D:\Outplayed.".into());
+    }
+    if !root.join(LEAGUE_DIR).is_dir() {
+        return Err(format!(
+            "{} has no \"{LEAGUE_DIR}\" folder: is it Outplayed's?",
+            root.display()
+        ));
+    }
+    Ok(root)
+}
+
+/// What importing an Outplayed library would add: a dry run that writes nothing.
+#[tauri::command]
+async fn outplayed_survey(
+    root: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<Survey, String> {
+    let root = outplayed_root(&root)?;
+    let library = state.library.clone();
+    tauri::async_runtime::spawn_blocking(move || library.outplayed_survey(&root))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())
+}
+
+/// Imports an Outplayed library's League videos by reference: never while League runs,
+/// and nothing in the Outplayed folder changes.
+#[tauri::command]
+async fn import_outplayed(
+    root: String,
+    app: AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<Survey, String> {
+    if game_running().await {
+        return Err("Not while League is running.".into());
+    }
+    let root = outplayed_root(&root)?;
+    let _one_at_a_time = state.match_edits.lock().await;
+    let library = state.library.clone();
+    let folder = root.clone();
+    let survey =
+        tauri::async_runtime::spawn_blocking(move || library.import_outplayed(&folder, now_ms()))
+            .await
+            .map_err(|e| e.to_string())?
+            .map_err(|e| e.to_string())?;
+    if let Err(error) = app
+        .asset_protocol_scope()
+        .allow_directory(root.join(LEAGUE_DIR), true)
+    {
+        tracing::warn!(%error, "imported videos won't play");
+    }
+    tracing::info!(
+        videos = survey.new,
+        joined = survey.joined,
+        markers = survey.markers,
+        "imported from Outplayed"
+    );
+    let _ = app.emit("matches-changed", "");
+    let _ = app.emit("storage-changed", ());
+    Ok(survey)
+}
+
+/// Lets the cleanup remove an import's videos (to the Recycle Bin), or not.
+#[tauri::command]
+async fn set_import_cleanup(
+    id: String,
+    allowed: bool,
+    app: AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    let _one_at_a_time = state.match_edits.lock().await;
+    let library = state.library.clone();
+    let import = id.clone();
+    tauri::async_runtime::spawn_blocking(move || library.set_import_cleanup(&import, allowed))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())?;
+    tracing::info!(%id, allowed, "cleanup for an import set");
+    let _ = app.emit("storage-changed", ());
+    Ok(())
 }
 
 /// Saves the cleanup's settings in `settings.toml`, the rest of the file as it is now.
@@ -602,13 +710,21 @@ pub fn run() {
             storage_overview,
             set_cleanup,
             run_cleanup,
-            retry_cleanup
+            retry_cleanup,
+            outplayed_survey,
+            import_outplayed,
+            set_import_cleanup
         ])
         .setup(move |app| {
             // The review's <video> streams match.mp4 from here, in ranged reads; the
             // asset protocol serves nothing outside the matches folder.
             app.asset_protocol_scope()
                 .allow_directory(&matches_dir, true)?;
+            // Imported videos play from where they were imported.
+            for import in library.imports() {
+                app.asset_protocol_scope()
+                    .allow_directory(import.root.join(LEAGUE_DIR), true)?;
+            }
             tray::create(app.handle())?;
             let thumbnails = Thumbnails::start(app.handle().clone(), library.clone(), ffmpeg);
             app.manage(thumbnails.clone());

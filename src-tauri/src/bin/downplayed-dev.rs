@@ -37,6 +37,11 @@
 //! downplayed-dev cleanup
 //!     The cleanup's dry run under the settings' `[storage]` limits: each full-match
 //!     video it would send to the Recycle Bin, and the space freed. Changes nothing.
+//! downplayed-dev outplayed <outplayed-folder> [--write]
+//!     What importing an Outplayed library would add: its League videos, those joined to
+//!     a record of its localStorage backup, the markers recovered, the results known.
+//!     Reads only, unless --write: then it imports them, by reference, into the library.
+//!     The Outplayed folder is never written to either way.
 //! ```
 //!
 //! `--extras` enables the Voidgrubs/first blood/ace/shutdown/spree markers; `--team` also
@@ -73,7 +78,8 @@ const USAGE: &str = "usage:
   downplayed-dev capture [seconds] [out-dir] [--stop-on-game]
   downplayed-dev audio
   downplayed-dev library [--cold]
-  downplayed-dev cleanup";
+  downplayed-dev cleanup
+  downplayed-dev outplayed <outplayed-folder> [--write]";
 
 #[derive(Default)]
 struct Flags {
@@ -83,6 +89,7 @@ struct Flags {
     force: bool,
     stop_on_game: bool,
     cold: bool,
+    write: bool,
     positional: Vec<String>,
 }
 
@@ -97,6 +104,7 @@ impl Flags {
                 "--force" => flags.force = true,
                 "--stop-on-game" => flags.stop_on_game = true,
                 "--cold" => flags.cold = true,
+                "--write" => flags.write = true,
                 other if other.starts_with("--") => return Err(format!("unknown flag {other}")),
                 other => flags.positional.push(other.to_owned()),
             }
@@ -139,6 +147,7 @@ async fn main() -> ExitCode {
             "capture" => run_capture(&flags).await,
             "library" => run_library(&flags),
             "cleanup" => run_cleanup(),
+            "outplayed" => run_outplayed(&flags),
             "help" | "-h" | "--help" => {
                 println!("{USAGE}");
                 Ok(())
@@ -552,6 +561,70 @@ fn run_cleanup() -> Result<(), String> {
             kept.why
         );
     }
+    Ok(())
+}
+
+/// The Outplayed import's dry run (or, with --write, the import).
+fn run_outplayed(flags: &Flags) -> Result<(), String> {
+    let root = PathBuf::from(
+        flags
+            .positional
+            .first()
+            .ok_or("outplayed needs the Outplayed folder, like D:\\Outplayed")?,
+    );
+    let paths = AppPaths::resolve();
+    let settings = load_settings(&paths);
+    let library = Library::new(
+        paths.matches_dir.clone(),
+        paths.recordings_dir.clone(),
+        settings.tracker_config().session,
+    );
+    let started = Instant::now();
+    let survey = if flags.write {
+        let now_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or_default();
+        library.import_outplayed(&root, now_ms)
+    } else {
+        library.outplayed_survey(&root)
+    }
+    .map_err(|e| format!("{}: {e}", root.display()))?;
+    println!("Outplayed library {}", survey.root.display());
+    println!(
+        "League videos: {} ({}); imported before: {}; new: {} ({})",
+        survey.videos,
+        disk::gb(survey.bytes),
+        survey.already,
+        survey.new,
+        disk::gb(survey.new_bytes)
+    );
+    match &survey.export {
+        Some(export) => println!(
+            "localStorage backup {}: {} League records",
+            export.display(),
+            survey.records
+        ),
+        None => println!("no localStorage backup (temp\\outplayed.json): names and lengths only"),
+    }
+    println!(
+        "of the new: {} joined to a record, {} markers recovered, {} with a champion, {} won, {} with the result unknown",
+        survey.joined, survey.markers, survey.champions, survey.wins, survey.unknown_results
+    );
+    println!(
+        "lengths read from {} of {}; {} dated by the file (no time in the name)",
+        survey.lengths, survey.new, survey.undated
+    );
+    println!(
+        "{} in {:.1} s{}",
+        if flags.write { "imported" } else { "dry run" },
+        started.elapsed().as_secs_f64(),
+        if flags.write {
+            format!(" into {}", paths.matches_dir.display())
+        } else {
+            ": nothing written".into()
+        }
+    );
     Ok(())
 }
 

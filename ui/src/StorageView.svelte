@@ -16,6 +16,14 @@
   /** Waiting for "Turn on" to be confirmed. */
   let confirming = $state(false);
   let message = $state('');
+  /** The Outplayed folder to import, what a look at it found, and what's going on. */
+  let folder = $state('');
+  let survey = $state(null);
+  let surveying = $state(false);
+  let importing = $state(false);
+  let imported = $state('');
+  /** An import waiting for "Allow" before the cleanup may remove its videos. */
+  let allowing = $state(null);
 
   const plan = $derived(overview?.plan);
   const saved = $derived(overview?.settings);
@@ -49,6 +57,7 @@
       if (ticket !== latest) return;
       overview = next;
       if (draft == null) draft = { ...next.settings };
+      if (!folder) folder = next.imports[0]?.root ?? next.outplayedFolder ?? '';
       shownKey = limitsOf(useDraft ? draft : next.settings);
       error = '';
     } catch (e) {
@@ -134,6 +143,52 @@
       else if (command === 'reveal') await invoke('reveal_video', { id });
       else if (command === 'retry') await invoke('retry_cleanup', { id });
       if (command !== 'reveal') await load();
+    } catch (e) {
+      error = String(e);
+    }
+  }
+
+  /** What importing the folder would add: reads only. */
+  async function look() {
+    surveying = true;
+    survey = null;
+    imported = '';
+    error = '';
+    try {
+      survey = await invoke('outplayed_survey', { root: folder });
+    } catch (e) {
+      error = String(e);
+    } finally {
+      surveying = false;
+    }
+  }
+
+  async function importNow() {
+    importing = true;
+    error = '';
+    try {
+      const done = await invoke('import_outplayed', { root: folder });
+      imported = `Imported ${plural(done.new, 'video', 'videos')}. They're in the match list.`;
+      survey = null;
+      await load();
+    } catch (e) {
+      error = String(e);
+    } finally {
+      importing = false;
+    }
+  }
+
+  /** Lets the cleanup remove an import's videos (asking first), or stops it. */
+  async function importCleanup(item, allowed) {
+    if (allowed && allowing !== item.id) {
+      allowing = item.id;
+      return;
+    }
+    allowing = null;
+    error = '';
+    try {
+      await invoke('set_import_cleanup', { id: item.id, allowed });
+      await load();
     } catch (e) {
       error = String(e);
     }
@@ -286,6 +341,69 @@
           : ''}.
       </p>
     {/if}
+  </section>
+
+  <section class="card">
+    <h2>Outplayed</h2>
+    {#each overview.imports as item (item.id)}
+      <div class="import">
+        <div>
+          <b>{item.root}</b>
+          <span class="muted">{plural(item.matches, 'video', 'videos')} imported, last on {when(item.atMs)}</span>
+        </div>
+        <div class="actions">
+          {#if item.cleanup}
+            <span class="small">The cleanup may send these videos to the Recycle Bin.</span>
+            <button type="button" class="back" onclick={() => importCleanup(item, false)}>Stop that</button>
+          {:else}
+            <span class="muted small">The cleanup leaves these videos alone.</span>
+            <button type="button" class="back" onclick={() => importCleanup(item, true)}>Let it remove them…</button>
+          {/if}
+        </div>
+        {#if allowing === item.id}
+          <div class="confirm" role="alertdialog" aria-label="Let the cleanup remove imported videos">
+            <span>
+              When it is on, the cleanup will send this import's old videos from {item.root} to the Recycle Bin, by the
+              same limits as Downplayed's own. Favorites stay.
+            </span>
+            <button type="button" class="save" onclick={() => importCleanup(item, true)}>Allow</button>
+            <button type="button" class="back" onclick={() => (allowing = null)}>Cancel</button>
+          </div>
+        {/if}
+      </div>
+    {/each}
+    <p class="muted">
+      Imports an Outplayed library's League videos where they are: Downplayed lists, plays and clips them, and changes
+      nothing in the Outplayed folder.
+    </p>
+    <div class="actions">
+      <input class="path" type="text" bind:value={folder} placeholder="D:\Outplayed" aria-label="Outplayed folder" />
+      <button type="button" class="back" disabled={!folder.trim() || surveying || importing} onclick={look}>
+        {surveying ? 'Looking…' : 'Look'}
+      </button>
+    </div>
+    {#if survey}
+      <p>
+        {plural(survey.videos, 'League video', 'League videos')} ({size(survey.bytes)}){survey.already
+          ? `, ${survey.already} imported before`
+          : ''}: <b>{survey.new} new</b> ({size(survey.newBytes)}).
+      </p>
+      <p class="muted small">
+        {#if survey.export}
+          Outplayed's records ({survey.records}) give {survey.joined} of them a champion, K/D/A or markers
+          ({plural(survey.markers, 'marker', 'markers')}); the rest have their date and length only.
+        {:else}
+          No Outplayed records next to them: dates and lengths only.
+        {/if}
+        Results: {survey.wins} won, {survey.unknownResults} unknown (a loss is never guessed).
+      </p>
+      {#if survey.new}
+        <button type="button" class="save" disabled={importing || overview.gameRunning} onclick={importNow}>
+          {importing ? 'Importing…' : `Import ${plural(survey.new, 'video', 'videos')}`}
+        </button>
+      {/if}
+    {/if}
+    {#if imported}<p class="done small">{imported}</p>{/if}
   </section>
 
   {#if overview.kept.length}
@@ -478,6 +596,20 @@
   }
   .kept {
     border-color: var(--warn);
+  }
+  .import {
+    padding: 8px 0;
+    border-bottom: 1px solid var(--line);
+    margin-bottom: 8px;
+  }
+  .path {
+    flex: 1 1 280px;
+    font: inherit;
+    padding: 4px 8px;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    background: var(--card);
+    color: var(--text);
   }
   .small {
     font-size: 12px;

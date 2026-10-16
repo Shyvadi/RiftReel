@@ -63,6 +63,8 @@ pub enum Source {
     Game,
     /// A fixture recorded by `downplayed-dev record`.
     Recording,
+    /// A video imported from Outplayed (by reference).
+    Outplayed,
 }
 
 impl Source {
@@ -70,14 +72,15 @@ impl Source {
         match self {
             Self::Game => "game",
             Self::Recording => "recording",
+            Self::Outplayed => "outplayed",
         }
     }
 
     fn parse(text: &str) -> Self {
-        if text == "recording" {
-            Self::Recording
-        } else {
-            Self::Game
+        match text {
+            "recording" => Self::Recording,
+            "outplayed" => Self::Outplayed,
+            _ => Self::Game,
         }
     }
 }

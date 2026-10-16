@@ -19,6 +19,9 @@ fn main() {
         "set_cleanup",
         "run_cleanup",
         "retry_cleanup",
+        "outplayed_survey",
+        "import_outplayed",
+        "set_import_cleanup",
     ]);
     tauri_build::try_build(tauri_build::Attributes::new().app_manifest(manifest))
         .expect("tauri-build failed");

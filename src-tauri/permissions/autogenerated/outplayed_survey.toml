@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-outplayed-survey"
+description = "Enables the outplayed_survey command without any pre-configured scope."
+commands.allow = ["outplayed_survey"]
+
+[[permission]]
+identifier = "deny-outplayed-survey"
+description = "Denies the outplayed_survey command without any pre-configured scope."
+commands.deny = ["outplayed_survey"]

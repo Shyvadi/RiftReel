@@ -304,7 +304,7 @@
     <div class="who">
       <h2>
         {match.champion ?? 'Unknown champion'}
-        {#if match.source === 'game'}
+        {#if match.source !== 'recording'}
           <button
             type="button"
             class="icon star"
@@ -319,9 +319,14 @@
       </h2>
       {#if favoriteError}<div class="error small">{favoriteError}</div>{/if}
       <div class="muted">
-        {match.queue ?? match.gameMode ?? ''}
-        {#if match.source === 'recording'}· recording{/if}
-        {#if match.startedWallMs && match.source === 'game'}· {when(match.startedWallMs)}{/if}
+        {[
+          match.queue ?? match.gameMode,
+          match.source === 'recording' && 'recording',
+          match.source !== 'recording' && match.startedWallMs && when(match.startedWallMs),
+          match.source === 'outplayed' && 'from Outplayed',
+        ]
+          .filter(Boolean)
+          .join(' · ')}
       </div>
       {#if match.description}<div class="muted small">{match.description}</div>{/if}
     </div>
@@ -385,7 +390,9 @@
         </div>
         {#if saveError?.key === 'range'}<p class="error small">{saveError.text}</p>{/if}
       {/if}
-      {#if recording}
+      {#if match.source === 'outplayed'}
+        <div class="muted small">Recorded by Outplayed: {match.recording?.path}</div>
+      {:else if recording}
         <div class="muted small">
           {recording.width}×{recording.height} · {recording.fps} fps · {recording.encoder}
           {#if recording.droppedFrames}· {recording.droppedFrames} dropped frames{/if}
@@ -670,6 +677,8 @@
     <p class="muted small">
       {#if match.source === 'recording'}
         Fixture recordings have no video.
+      {:else if match.source === 'outplayed' && !match.videoRemoved}
+        This match's Outplayed video is no longer at {match.recording?.path}.
       {:else if match.videoRemoved}
         The cleanup sent this match's full recording to the Recycle Bin on {when(match.videoRemoved.atMs)}
         ({match.videoRemoved.reason === 'age' ? 'older than the days kept' : 'over the size limit'}).

@@ -10,10 +10,12 @@
 //!
 //! The list comes from an index of the folders (`index`, `library.db` in the library's
 //! root): the sidecars are the truth, the index a cache kept in step with them. The
-//! cleanup (`janitor`) keeps the full-match videos within the user's limits.
+//! cleanup (`janitor`) keeps the full-match videos within the user's limits, and
+//! `outplayed` imports an Outplayed library's videos by reference.
 
 mod index;
 pub mod janitor;
+pub mod outplayed;
 
 use std::collections::HashSet;
 use std::io;
@@ -233,7 +235,8 @@ impl Library {
         let mut entries = Vec::new();
         let mut removed = Vec::new();
 
-        let indexed = self.index.stamps(Source::Game).unwrap_or_default();
+        let mut indexed = self.index.stamps(Source::Game).unwrap_or_default();
+        indexed.extend(self.index.stamps(Source::Outplayed).unwrap_or_default());
         let mut seen = HashSet::new();
         for dir in read_dir(&self.matches_dir) {
             let Some(id) = dir.file_name().and_then(|n| n.to_str()).map(str::to_owned) else {
@@ -372,7 +375,7 @@ impl Library {
         let thumbnail_path = row
             .thumbnail
             .as_deref()
-            .filter(|_| row.source == Source::Game)
+            .filter(|_| row.source != Source::Recording)
             .and_then(|file| member_file(&self.matches_dir.join(&row.id), THUMBS_DIR, file))
             .map(|path| path.display().to_string());
         MatchCard {
@@ -416,7 +419,8 @@ impl Library {
         let mut summary = read_json(&dir.join(MATCH_FILE))?;
         let video = video_path(&dir, &summary);
         let object = summary.as_object_mut()?;
-        object.insert("source".into(), "game".into());
+        // A match of Downplayed's own has no `source`; an imported one keeps its own.
+        object.entry("source").or_insert_with(|| "game".into());
         if let Some(video) = video {
             object.insert("videoPath".into(), video.display().to_string().into());
         }
@@ -446,11 +450,7 @@ impl Library {
             read_json(&dir.join(MATCH_FILE)).ok_or_else(|| not_found("match not found"))?;
         let video =
             video_path(&dir, &summary).ok_or_else(|| not_found("this match has no video"))?;
-        let recording = &summary["recording"];
-        let video_s = match (recording["frames"].as_f64(), recording["fps"].as_f64()) {
-            (Some(frames), Some(fps)) if fps > 0.0 => frames / fps,
-            _ => f64::INFINITY,
-        };
+        let video_s = video_seconds(&summary).unwrap_or(f64::INFINITY);
         let thumbnail = thumbnail_s.unwrap_or((span.0 + span.1) / 2.0);
         let plan = plan_span(
             next_clip_number(&dir, &summary),
@@ -701,7 +701,11 @@ fn game_entry(id: &str, dir: &Path, summary: &Value, stamp: Stamp) -> Entry {
         clips,
         ..entry(
             id,
-            Source::Game,
+            if summary["source"] == OUTPLAYED_SOURCE {
+                Source::Outplayed
+            } else {
+                Source::Game
+            },
             summary["startedWallMs"].as_i64(),
             summary,
             stamp,
@@ -786,14 +790,21 @@ fn thumbnail_moment(summary: &Value) -> f64 {
             .or(members.first())?;
         named["videoTimeS"].as_f64()
     });
-    let recording = &summary["recording"];
-    let third = match (recording["frames"].as_f64(), recording["fps"].as_f64()) {
-        (Some(frames), Some(fps)) if fps > 0.0 && frames > 0.0 => Some(frames / fps / 3.0),
-        _ => None,
-    };
+    let third = video_seconds(summary).map(|seconds| seconds / 3.0);
     main.filter(|s| s.is_finite() && *s >= 0.0)
         .or(third)
         .unwrap_or(10.0)
+}
+
+/// How long a match's video is: its frames at its frame rate (a recording of Downplayed's
+/// own), or the length read from the file (an import).
+fn video_seconds(summary: &Value) -> Option<f64> {
+    let recording = &summary["recording"];
+    let seconds = match (recording["frames"].as_f64(), recording["fps"].as_f64()) {
+        (Some(frames), Some(fps)) if fps > 0.0 => frames / fps,
+        _ => recording["durationS"].as_f64()?,
+    };
+    (seconds.is_finite() && seconds > 0.0).then_some(seconds)
 }
 
 fn unix_ns(at: SystemTime) -> i64 {
@@ -848,11 +859,23 @@ fn write_json<T: Serialize + ?Sized>(path: &Path, value: &T) -> io::Result<()> {
     std::fs::rename(&temp, path)
 }
 
-/// The match's video, if `match.json` names one (a plain file name: never a path out of
-/// the folder) and it exists.
+/// The match's video, if it exists: the file `match.json` names in the folder (a plain
+/// file name, never a path out of it), or for an imported match the MP4 where it was
+/// imported from (an absolute path).
 fn video_path(dir: &Path, summary: &Value) -> Option<PathBuf> {
-    let file = safe_name(summary["recording"]["file"].as_str()?)?;
-    Some(dir.join(file)).filter(|path| path.is_file())
+    let recording = &summary["recording"];
+    if let Some(file) = recording["file"].as_str() {
+        let file = safe_name(file)?;
+        return Some(dir.join(file)).filter(|path| path.is_file());
+    }
+    if summary["source"] != OUTPLAYED_SOURCE {
+        return None;
+    }
+    let path = PathBuf::from(recording["path"].as_str()?);
+    let mp4 = path
+        .extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("mp4"));
+    (path.is_absolute() && mp4 && path.is_file()).then_some(path)
 }
 
 /// `<date>_<time>` of `started_wall_ms` (UTC), then each known part, slugged.
@@ -1121,6 +1144,28 @@ mod tests {
             let review = library.get("m1").unwrap();
             assert_eq!(review.get("videoPath").is_some(), plays, "{file}");
             assert_eq!(library.list()[0].video, plays, "{file}");
+        }
+        // Only an imported match points outside its folder: at an MP4, by a full path.
+        std::fs::write(root.join("secret").join("notes.txt"), b"").unwrap();
+        let outside = root.join("secret").join("x.mp4").display().to_string();
+        let text = root.join("secret").join("notes.txt").display().to_string();
+        for (source, path, plays) in [
+            (Some(OUTPLAYED_SOURCE), outside.as_str(), true),
+            (None, outside.as_str(), false),
+            (Some(OUTPLAYED_SOURCE), r"secret\x.mp4", false),
+            (Some(OUTPLAYED_SOURCE), text.as_str(), false),
+        ] {
+            let mut json = serde_json::json!({ "recording": { "path": path } });
+            if let Some(source) = source {
+                json["source"] = source.into();
+            }
+            std::fs::write(matches.join("m1").join(MATCH_FILE), json.to_string()).unwrap();
+            let review = library.get("m1").unwrap();
+            assert_eq!(
+                review.get("videoPath").is_some(),
+                plays,
+                "{source:?} {path}"
+            );
         }
         std::fs::remove_dir_all(&root).ok();
     }
