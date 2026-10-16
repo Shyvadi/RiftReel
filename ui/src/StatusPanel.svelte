@@ -3,16 +3,10 @@
 
   let { tracker } = $props();
 
-  const marks = { ok: '✔', busy: '●', warn: '⚠', bad: '✖' };
-
   const client = $derived(
     tracker.lcuConnected
-      ? { state: 'ok', title: 'League client detected', detail: tracker.phase ? `phase ${tracker.phase}` : '' }
-      : {
-          state: 'bad',
-          title: 'League client not running',
-          detail: 'games are still tracked from the game itself',
-        },
+      ? { state: 'ok', title: 'League client', detail: tracker.phase ? `connected · ${tracker.phase}` : 'connected' }
+      : { state: 'idle', title: 'League client', detail: 'not running; games still get tracked' },
   );
 
   const game = $derived.by(() => {
@@ -27,88 +21,113 @@
           return { state: 'warn', title: 'Not tracking this game', detail: reason };
         }
         if (tracker.reconnecting) {
-          return { state: 'warn', title: 'Reconnecting', detail: 'the match continues where it left off' };
+          return { state: 'warn', title: 'Reconnecting', detail: 'the match carries on where it left off' };
         }
         return {
           state: 'busy',
           title: 'Tracking your game',
           detail: current
-            ? `${current.moments.length} moment${current.moments.length === 1 ? '' : 's'} so far · ${clock(current.gameTimeS)}`
+            ? `${current.moments.length} moment${current.moments.length === 1 ? '' : 's'} · ${clock(current.gameTimeS)}`
             : '',
         };
       case 'Finalizing':
         return { state: 'busy', title: 'Match over', detail: 'saving the review' };
       default:
-        return { state: 'ok', title: 'Ready', detail: 'your next game will be tracked and reviewed here' };
+        return { state: 'ok', title: 'Ready', detail: 'your next game is recorded' };
     }
   });
 
   const capture = $derived.by(() => {
     const status = tracker.capture;
-    const encoder = status?.encoder ? `with ${status.encoder}` : '';
     switch (status?.state) {
       case undefined:
       case null:
         return null;
       case 'off':
-        return { state: 'warn', title: 'Recording is off', detail: '[capture] enabled = false in the settings' };
+        return { state: 'warn', title: 'Recording off', detail: '[capture] enabled = false' };
       case 'starting':
         return { state: 'busy', title: 'Getting ready to record', detail: 'waiting for the game window' };
       case 'recording':
-        return { state: 'busy', title: 'Recording', detail: encoder };
+        return { state: 'rec', title: 'Recording', detail: status.encoder ?? '' };
       case 'saving':
         return { state: 'busy', title: 'Saving the video', detail: '' };
       case 'failed':
         return { state: 'bad', title: 'Recording failed', detail: status.error ?? '' };
       default:
-        return { state: 'ok', title: 'Recorder ready', detail: 'games are recorded to the library' };
+        return { state: 'ok', title: 'Recorder ready', detail: status?.encoder ? `with ${status.encoder}` : '' };
     }
   });
 </script>
 
-<section class="status card" aria-label="Status">
-  {#each [client, game, capture].filter(Boolean) as row (row.title)}
-    <div class="row">
-      <span class="mark {row.state}" aria-hidden="true">{marks[row.state]}</span>
-      <span class="title">{row.title}</span>
-      {#if row.detail}<span class="detail">{row.detail}</span>{/if}
-    </div>
+<ul class="status" aria-label="Status">
+  {#each [game, capture, client].filter(Boolean) as row (row.title)}
+    <li>
+      <span class="dot {row.state}" aria-hidden="true"></span>
+      <span class="text">
+        <span class="title">{row.title}</span>
+        {#if row.detail}<span class="detail">{row.detail}</span>{/if}
+      </span>
+    </li>
   {/each}
-</section>
+</ul>
 
 <style>
   .status {
+    list-style: none;
+    margin: 0;
+    padding: 0 6px;
     display: grid;
-    gap: 8px;
+    gap: 12px;
   }
-  .row {
+  li {
     display: flex;
-    align-items: baseline;
-    gap: 10px;
-    flex-wrap: wrap;
+    gap: 12px;
+    align-items: flex-start;
   }
-  .mark {
-    width: 18px;
-    text-align: center;
-    font-size: 15px;
-    font-family: 'Segoe UI Symbol', 'Segoe UI', system-ui, sans-serif;
+  .dot {
+    flex: none;
+    width: 10px;
+    height: 10px;
+    margin-top: 6px;
+    border-radius: 50%;
+    background: var(--muted);
   }
-  .mark.ok {
-    color: var(--win);
+  .dot.ok {
+    background: var(--win);
   }
-  .mark.busy {
-    color: var(--accent);
+  .dot.busy {
+    background: var(--accent);
   }
-  .mark.warn {
-    color: var(--warn);
+  .dot.warn {
+    background: var(--warn);
   }
-  .mark.bad {
-    color: var(--lose);
+  .dot.bad {
+    background: var(--lose);
+  }
+  .dot.idle {
+    background: var(--line);
+  }
+  .dot.rec {
+    background: var(--fight);
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--fight) 25%, transparent);
+    animation: pulse 1.6s ease-in-out infinite;
+  }
+  @keyframes pulse {
+    50% {
+      opacity: 0.4;
+    }
+  }
+  .text {
+    display: grid;
+    min-width: 0;
   }
   .title {
+    font-size: 15px;
     font-weight: 600;
   }
   .detail {
     color: var(--muted);
+    font-size: 13px;
+    overflow-wrap: anywhere;
   }
 </style>

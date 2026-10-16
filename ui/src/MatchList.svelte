@@ -3,11 +3,12 @@
   import { convertFileSrc, invoke } from '@tauri-apps/api/core';
   import { listen } from '@tauri-apps/api/event';
   import { clock, when } from './lib/format.js';
+  import Icon from './lib/Icon.svelte';
 
   let { onOpen } = $props();
 
   /** Every row is this tall, so the list can place any of them without measuring. */
-  const ROW = 64;
+  const ROW = 100;
   /** Matches per query. */
   const PAGE = 100;
   /** Rows drawn beyond the visible ones, each way. */
@@ -24,6 +25,16 @@
     sort: 'newest',
   });
   let filters = $state(noFilters());
+  /** The date filter as picked: a preset, or 'custom' for the two date fields. */
+  let period = $state('any');
+  const periods = [
+    { value: 'any', label: 'Any time' },
+    { value: '7', label: 'Last 7 days' },
+    { value: '30', label: 'Last 30 days' },
+    { value: '90', label: 'Last 90 days' },
+    { value: 'year', label: 'This year' },
+    { value: 'custom', label: 'Custom dates…' },
+  ];
   let facets = $state({ champions: [], queues: [] });
   /** How many matches pass the filters; null until the first page arrives. */
   let total = $state(null);
@@ -172,16 +183,46 @@
 
   function clear() {
     filters = noFilters();
+    period = 'any';
+  }
+
+  /** `day` as the date fields write it (local). */
+  const dateText = (day) =>
+    `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, '0')}-${String(day.getDate()).padStart(2, '0')}`;
+
+  /** A preset sets the date fields; 'custom' leaves them to the user. */
+  function pickPeriod(value) {
+    period = value;
+    if (value === 'custom') return;
+    const today = new Date();
+    if (value === 'any') {
+      filters.from = '';
+    } else if (value === 'year') {
+      filters.from = `${today.getFullYear()}-01-01`;
+    } else {
+      const from = new Date(today);
+      from.setDate(from.getDate() - (Number(value) - 1));
+      filters.from = dateText(from);
+    }
+    filters.to = '';
   }
 
   const initial = (name) => (name ? name.slice(0, 1).toUpperCase() : '?');
+  const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
 </script>
 
-<section class="card">
-  <div class="top">
-    <h2>Matches</h2>
-    {#if total !== null}<span class="muted">{total}{filtered ? ' shown' : ''}</span>{/if}
-  </div>
+<header class="page-head">
+  <h1>Matches</h1>
+  {#if total !== null}<span class="count">{total}{filtered ? ' shown' : ''}</span>{/if}
+  <select class="sort" bind:value={filters.sort} aria-label="Sort">
+    <option value="newest">Newest first</option>
+    <option value="oldest">Oldest first</option>
+    <option value="longest">Longest first</option>
+    <option value="most_kills">Most kills first</option>
+  </select>
+</header>
+
+<section class="card list">
   <div class="filters" role="group" aria-label="Filter and sort the matches">
     <select bind:value={filters.champion} aria-label="Champion">
       <option value="">All champions</option>
@@ -197,32 +238,45 @@
       <option value="lose">Losses</option>
       <option value="unknown">Unknown</option>
     </select>
-    <label><input type="checkbox" bind:checked={filters.hasClips} /> clips</label>
-    <label
-      ><input type="checkbox" bind:checked={filters.hasMultikill} /> multikill</label
-    >
-    <label class="date">from <input type="date" bind:value={filters.from} /></label>
-    <label class="date">to <input type="date" bind:value={filters.to} /></label>
-    <select bind:value={filters.sort} aria-label="Sort">
-      <option value="newest">Newest</option>
-      <option value="oldest">Oldest</option>
-      <option value="longest">Longest</option>
-      <option value="most_kills">Most kills</option>
+    <select value={period} onchange={(event) => pickPeriod(event.currentTarget.value)} aria-label="When">
+      {#each periods as option (option.value)}<option value={option.value}>{option.label}</option>{/each}
     </select>
-    {#if filtered}<button type="button" class="link" onclick={clear}>clear</button>{/if}
+    <button
+      type="button"
+      class="chip"
+      aria-pressed={filters.hasClips}
+      onclick={() => (filters.hasClips = !filters.hasClips)}>With clips</button
+    >
+    <button
+      type="button"
+      class="chip"
+      aria-pressed={filters.hasMultikill}
+      onclick={() => (filters.hasMultikill = !filters.hasMultikill)}>Multikills</button
+    >
+    {#if period === 'custom'}
+      <span class="dates">
+        <input type="date" bind:value={filters.from} aria-label="From" />
+        <span class="muted">to</span>
+        <input type="date" bind:value={filters.to} aria-label="To" />
+      </span>
+    {/if}
+    <span class="grow"></span>
+    {#if filtered}<button type="button" class="btn ghost small" onclick={clear}>Clear filters</button>{/if}
   </div>
 
   {#if error}<p class="error">{error}</p>{/if}
   {#if total === null}
-    <p class="muted">Loading…</p>
+    <p class="empty muted">Loading…</p>
   {:else if total === 0}
-    <p class="muted">
+    <div class="empty">
       {#if filtered}
-        No matches fit these filters.
+        <p>No matches fit these filters.</p>
+        <button type="button" class="btn" onclick={clear}>Clear filters</button>
       {:else}
-        No matches yet. Play a game (Practice Tool works) and its review opens here afterwards.
+        <p><b>No matches yet.</b></p>
+        <p class="muted">Play a game (Practice Tool works): Downplayed records it, and its review opens here afterwards.</p>
       {/if}
-    </p>
+    </div>
   {:else}
     <div
       class="scroller"
@@ -235,32 +289,46 @@
           {@const match = row.match}
           <li style:transform="translateY({row.index * ROW}px)">
             {#if match}
-              <button type="button" onclick={() => onOpen(match.id)}>
+              <button
+                type="button"
+                class="row"
+                class:win={match.result === 'win'}
+                class:lose={match.result === 'lose'}
+                onclick={() => onOpen(match.id)}
+              >
                 <span class="thumb">
                   {#if match.thumbnailPath}
                     <img src={convertFileSrc(match.thumbnailPath)} alt="" loading="lazy" decoding="async" />
                   {:else}
                     <span class="initial">{initial(match.champion)}</span>
                   {/if}
-                </span>
-                <span class="result" class:win={match.result === 'win'} class:lose={match.result === 'lose'}>
-                  {match.result === 'win' ? 'Win' : match.result === 'lose' ? 'Loss' : '–'}
+                  {#if match.durationS}<span class="length">{clock(match.durationS)}</span>{/if}
                 </span>
                 <span class="who">
-                  <b>{match.champion ?? 'Unknown champion'}</b>
-                  <span class="muted">{match.queue ?? match.gameMode ?? ''}</span>
+                  <span class="name">
+                    <b>{match.champion ?? 'Unknown champion'}</b>
+                    {#if match.result === 'win' || match.result === 'lose'}
+                      <span class="result">{match.result === 'win' ? 'Win' : 'Loss'}</span>
+                    {/if}
+                  </span>
+                  <span class="sub">
+                    {[match.queue ?? match.gameMode, when(match.whenMs)].filter(Boolean).join(' · ')}
+                  </span>
                 </span>
-                <span class="num">
-                  {match.kills ?? '–'} / {match.deaths ?? '–'} / {match.assists ?? '–'}
+                <span class="kda">
+                  <b>{match.kills ?? '–'} / {match.deaths ?? '–'} / {match.assists ?? '–'}</b>
+                  <span>K / D / A</span>
                 </span>
-                <span class="num muted">{clock(match.durationS)}</span>
                 <span class="tags">
-                  {#if match.multikills}<span class="tag hot">{match.multikills} multikill{match.multikills === 1 ? '' : 's'}</span>{/if}
-                  {#if match.clips}<span class="tag">{match.clips} clip{match.clips === 1 ? '' : 's'}{match.favoriteClips ? ' ★' : ''}</span>{/if}
-                  {#if match.source === 'recording'}<span class="tag">recording</span>{/if}
-                  {#if match.source === 'outplayed'}<span class="tag">Outplayed</span>{/if}
+                  {#if match.multikills}<span class="pill hot">{plural(match.multikills, 'multikill', 'multikills')}</span>{/if}
+                  {#if match.clips}<span class="pill"
+                      >{plural(match.clips, 'clip', 'clips')}{match.favoriteClips ? ' ★' : ''}</span
+                    >{/if}
+                  {#if match.source === 'recording'}<span class="pill">Recording</span>{/if}
+                  {#if match.source === 'outplayed'}<span class="pill">Outplayed</span>{/if}
+                  {#if !match.video && match.source !== 'recording'}<span class="pill quiet">No video</span>{/if}
                 </span>
-                <span class="when muted">{when(match.whenMs)}</span>
+                <span class="go" aria-hidden="true"><Icon name="play" size={18} /></span>
               </button>
             {:else}
               <div class="placeholder"></div>
@@ -273,49 +341,71 @@
 </section>
 
 <style>
-  .top {
+  .list {
+    flex: 1;
+    min-height: 360px;
     display: flex;
-    align-items: baseline;
-    gap: 10px;
-  }
-  .top h2 {
-    margin: 0 0 8px;
+    flex-direction: column;
+    padding: 18px 18px 8px;
   }
   .filters {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    gap: 6px 10px;
-    margin-bottom: 10px;
-    font-size: 13px;
+    gap: 10px;
+    padding: 0 6px 16px;
+    border-bottom: 1px solid var(--line);
   }
-  .filters select,
-  .filters input[type='date'] {
-    font: inherit;
-    color: var(--text);
-    background: var(--card);
+  .filters select {
+    min-width: 140px;
+  }
+  .sort {
+    margin-left: auto;
+    align-self: center;
+  }
+  .chip {
+    height: 42px;
+    padding: 0 16px;
+    border-radius: 999px;
     border: 1px solid var(--line);
-    border-radius: 6px;
-    padding: 3px 6px;
+    background: var(--raised);
+    color: var(--muted);
+    font: inherit;
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
   }
-  .filters label {
+  .chip:hover {
+    color: var(--text);
+    border-color: var(--muted);
+  }
+  .chip[aria-pressed='true'] {
+    background: var(--accent-soft);
+    border-color: var(--accent);
+    color: var(--text);
+  }
+  .dates {
     display: inline-flex;
     align-items: center;
-    gap: 4px;
-    color: var(--muted);
+    gap: 8px;
+    font-size: 15px;
   }
-  .link {
-    border: 0;
-    background: none;
-    padding: 0;
-    color: var(--muted);
-    font: inherit;
-    text-decoration: underline;
-    cursor: pointer;
+  .grow {
+    flex: 1;
+  }
+  .empty {
+    padding: 48px 12px;
+    text-align: center;
+    font-size: 16px;
+  }
+  .empty p {
+    margin: 0 0 10px;
   }
   .scroller {
     position: relative;
-    height: min(62vh, 640px);
+    flex: 1;
+    min-height: 0;
+    margin-top: 8px;
     overflow-y: auto;
     contain: strict;
   }
@@ -330,44 +420,52 @@
     top: 0;
     left: 0;
     right: 0;
-    height: 64px;
-    box-sizing: border-box;
-    border-bottom: 1px solid var(--line);
+    height: 100px;
+    padding: 4px 0;
   }
-  button {
+  .row {
     all: unset;
     box-sizing: border-box;
     width: 100%;
     height: 100%;
     display: grid;
     /* Fixed columns, so rows line up (each row is its own grid). */
-    grid-template-columns: 96px 40px minmax(0, 1fr) 96px 56px 170px 150px;
+    grid-template-columns: 148px minmax(0, 1fr) 150px minmax(0, 250px) 28px;
     align-items: center;
-    gap: 12px;
-    padding: 4px 6px;
-    border-radius: 6px;
+    gap: 20px;
+    padding: 0 16px 0 10px;
+    border-radius: var(--radius-sm);
+    border-left: 4px solid transparent;
     cursor: pointer;
   }
-  button:hover,
-  button:focus-visible {
+  .row:hover,
+  .row:focus-visible {
     background: var(--hover);
   }
-  button:focus-visible {
+  .row:focus-visible {
     outline: 2px solid var(--accent);
+    outline-offset: -2px;
+  }
+  .row.win {
+    border-left-color: var(--win);
+  }
+  .row.lose {
+    border-left-color: var(--lose);
   }
   .placeholder {
     height: 100%;
-    margin: 0 6px;
+    margin: 0 4px;
     background: linear-gradient(90deg, var(--hover), transparent);
-    border-radius: 6px;
+    border-radius: var(--radius-sm);
     opacity: 0.6;
   }
   .thumb {
-    width: 96px;
-    height: 54px;
-    border-radius: 5px;
+    position: relative;
+    width: 148px;
+    height: 84px;
+    border-radius: 8px;
     overflow: hidden;
-    background: var(--hover);
+    background: var(--raised);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -379,66 +477,104 @@
     display: block;
   }
   .initial {
+    font-size: 30px;
     font-weight: 700;
     color: var(--muted);
   }
-  .result {
-    font-weight: 700;
-    text-transform: uppercase;
-    font-size: 12px;
-    color: var(--muted);
-  }
-  .result.win {
-    color: var(--win);
-  }
-  .result.lose {
-    color: var(--lose);
+  .length {
+    position: absolute;
+    right: 6px;
+    bottom: 6px;
+    padding: 1px 7px;
+    border-radius: 6px;
+    background: rgba(0, 0, 0, 0.72);
+    color: #fff;
+    font-size: 13px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
   }
   .who {
-    display: flex;
-    flex-direction: column;
+    display: grid;
+    gap: 4px;
     min-width: 0;
   }
-  .who b,
-  .who span {
+  .name {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    min-width: 0;
+  }
+  .name b {
+    font-size: 19px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  .num {
-    text-align: right;
+  .result {
+    flex: none;
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 0.6px;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+  .row.win .result {
+    color: var(--win);
+  }
+  .row.lose .result {
+    color: var(--lose);
+  }
+  .sub {
+    color: var(--muted);
+    font-size: 15px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .kda {
+    display: grid;
+    justify-items: end;
+    gap: 2px;
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
   }
+  .kda b {
+    font-size: 19px;
+  }
+  .kda span {
+    color: var(--muted);
+    font-size: 12px;
+    letter-spacing: 0.6px;
+  }
   .tags {
     display: flex;
-    gap: 4px;
+    flex-wrap: wrap;
+    gap: 6px;
     justify-content: flex-end;
+    max-height: 60px;
     overflow: hidden;
   }
-  .tag {
-    display: inline-block;
-    padding: 0 6px;
-    border: 1px solid var(--line);
-    border-radius: 999px;
-    font-size: 11px;
-    white-space: nowrap;
-  }
-  .tag.hot {
+  .pill.hot {
     border-color: var(--fight);
     color: var(--fight);
   }
-  .when {
-    text-align: right;
-    font-size: 12px;
+  .pill.quiet {
+    color: var(--muted);
   }
-  @media (max-width: 860px) {
-    button {
-      grid-template-columns: 96px 40px minmax(0, 1fr) auto;
+  .go {
+    color: var(--muted);
+    opacity: 0;
+  }
+  .row:hover .go,
+  .row:focus-visible .go {
+    opacity: 1;
+    color: var(--accent);
+  }
+  @media (max-width: 1100px) {
+    .row {
+      grid-template-columns: 148px minmax(0, 1fr) 130px 28px;
     }
-    button > :nth-child(5),
-    button > :nth-child(6),
-    button > :nth-child(7) {
+    .tags {
       display: none;
     }
   }

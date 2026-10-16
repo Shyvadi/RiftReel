@@ -25,7 +25,8 @@ tauri-build = { version = "2.7", features = [] }
 
 [dependencies]
 # `protocol-asset`: the review's <video> streams match.mp4 from the library folder.
-tauri = { version = "2.12", features = ["tray-icon", "protocol-asset"] }
+# `image-png`: the tray's own icon (icons/tray.png).
+tauri = { version = "2.12", features = ["tray-icon", "protocol-asset", "image-png"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml = "1"

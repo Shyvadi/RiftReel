@@ -1,10 +1,12 @@
 //! System tray: the whole UI while no window is open.
 
+use tauri::image::Image;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder, Wry};
 
 use crate::capture::CaptureState;
+use crate::settings::AppPaths;
 use crate::tracker::machine::TrackerState;
 use crate::tracker::runtime::TrackerStatus;
 
@@ -48,8 +50,14 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
                 show_main_window(tray.app_handle());
             }
         });
-    if let Some(icon) = app.default_window_icon() {
-        tray = tray.icon(icon.clone());
+    // The play button alone: at tray size the app icon's letter would blur.
+    match Image::from_bytes(include_bytes!("../icons/tray.png")) {
+        Ok(icon) => tray = tray.icon(icon),
+        Err(_) => {
+            if let Some(icon) = app.default_window_icon() {
+                tray = tray.icon(icon.clone());
+            }
+        }
     }
     tray.build(app)?;
     app.manage(TrayItems { status });
@@ -81,15 +89,30 @@ pub fn show_match(app: &AppHandle, id: &str) -> bool {
     true
 }
 
-/// Creates the window. Invisible windows exist for smoke tests (the page still loads).
+/// Creates the window, centred, as big as its default or nine tenths of the screen
+/// (Ctrl + / Ctrl - zoom it). Invisible windows exist for smoke tests (the page still
+/// loads).
 pub fn create_main_window(app: &AppHandle, visible: bool) {
-    let built = WebviewWindowBuilder::new(app, MAIN_WINDOW, WebviewUrl::App("index.html".into()))
-        .title("Downplayed")
-        .inner_size(960.0, 640.0)
-        .min_inner_size(640.0, 420.0)
-        .visible(visible)
-        .build();
-    if let Err(error) = built {
+    let (mut width, mut height) = (1360.0, 880.0);
+    if let Ok(Some(monitor)) = app.primary_monitor() {
+        let screen = monitor.size().to_logical::<f64>(monitor.scale_factor());
+        width = f64::min(width, screen.width * 0.9);
+        height = f64::min(height, screen.height * 0.85);
+    }
+    let mut builder =
+        WebviewWindowBuilder::new(app, MAIN_WINDOW, WebviewUrl::App("index.html".into()))
+            .title("Downplayed")
+            .inner_size(width, height)
+            .min_inner_size(960.0, 600.0)
+            .center()
+            .zoom_hotkeys_enabled(true)
+            .visible(visible);
+    // A development home keeps its own WebView2 data: WebView2 refuses a second process on
+    // the real one's folder with other options (a DevTools port, say).
+    if let Some(home) = AppPaths::development_home() {
+        builder = builder.data_directory(home.join("webview"));
+    }
+    if let Err(error) = builder.build() {
         tracing::error!(%error, "could not open the window");
     }
 }

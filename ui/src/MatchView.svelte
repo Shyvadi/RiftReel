@@ -1,6 +1,7 @@
 <script>
   import { convertFileSrc, invoke } from '@tauri-apps/api/core';
   import { category, clock, kda, when, words } from './lib/format.js';
+  import Icon from './lib/Icon.svelte';
 
   let { id, onBack } = $props();
 
@@ -291,34 +292,34 @@
   }
 </script>
 
-<nav>
-  <button type="button" class="back" onclick={onBack}>← All matches</button>
-</nav>
+<div class="topbar">
+  <button type="button" class="btn ghost" onclick={onBack}><Icon name="back" /> All matches</button>
+</div>
 
 {#if error}
   <p class="error">{error}</p>
 {:else if !match}
   <p class="muted">Loading…</p>
 {:else}
-  <header class="card head">
+  <header class="card head" class:won={match.result === 'win'} class:lost={match.result === 'lose'}>
     <div class="who">
-      <h2>
-        {match.champion ?? 'Unknown champion'}
+      <div class="title">
+        <h1>{match.champion ?? 'Unknown champion'}</h1>
         {#if match.source !== 'recording'}
           <button
             type="button"
-            class="icon star"
+            class="icon-btn star"
             class:on={match.favorite}
             aria-pressed={!!match.favorite}
+            aria-label="Favorite"
             title={match.favorite
               ? 'Favorite: the cleanup never removes this match'
               : 'Mark as favorite: the cleanup never removes favorites'}
-            onclick={toggleMatchFavorite}>{match.favorite ? '★' : '☆'}</button
+            onclick={toggleMatchFavorite}><Icon name={match.favorite ? 'star-filled' : 'star'} size={26} /></button
           >
         {/if}
-      </h2>
-      {#if favoriteError}<div class="error small">{favoriteError}</div>{/if}
-      <div class="muted">
+      </div>
+      <div class="sub">
         {[
           match.queue ?? match.gameMode,
           match.source === 'recording' && 'recording',
@@ -329,18 +330,19 @@
           .join(' · ')}
       </div>
       {#if match.description}<div class="muted small">{match.description}</div>{/if}
+      {#if favoriteError}<div class="error small">{favoriteError}</div>{/if}
     </div>
     <div class="outcome">
-      <span class="badge" class:win={match.result === 'win'} class:lose={match.result === 'lose'}>
+      <span class="badge">
         {match.result === 'win' ? 'Victory' : match.result === 'lose' ? 'Defeat' : 'Result unknown'}
       </span>
       {#if match.resultSource}<div class="muted small">{sourceText[match.resultSource] ?? ''}</div>{/if}
     </div>
     <div class="stats">
       <div><b>{kda(match.kda)}</b><span>K / D / A</span></div>
-      <div><b>{clock(match.durationS)}</b><span>length</span></div>
-      <div><b>{match.team ?? '–'}</b><span>team</span></div>
-      <div><b>{match.moments.length}</b><span>moments</span></div>
+      <div><b>{clock(match.durationS)}</b><span>Length</span></div>
+      <div><b>{match.team ?? '–'}</b><span>Team</span></div>
+      <div><b>{match.moments.length}</b><span>Moments</span></div>
     </div>
   </header>
 
@@ -350,11 +352,13 @@
       {#if shown}
         <div class="playing">
           <span>
-            Clip {shownIndex + 1} · <span class="label">{words(shown.label)}</span>
+            <b>Clip {shownIndex + 1}</b> · <span class="label">{words(shown.label)}</span>
             <span class="muted">· {gameClock(shown.fromS)}–{gameClock(shown.toS)}</span>
           </span>
           {#if videoSrc}
-            <button type="button" class="back" onclick={() => show(null, shown.fromS + videoTime)}>Whole match</button>
+            <button type="button" class="btn small" onclick={() => show(null, shown.fromS + videoTime)}
+              >Back to the whole match</button
+            >
           {/if}
         </div>
       {/if}
@@ -371,29 +375,31 @@
       {#if videoError}<p class="error">{videoError}</p>{/if}
       {#if videoSrc}
         <div class="trim" role="group" aria-label="Make a clip">
-          <button type="button" class="back" onclick={() => mark('in')}>Mark in</button>
-          <span class="num">{markIn == null ? '–' : gameClock(markIn)}</span>
-          <button type="button" class="back" onclick={() => mark('out')}>Mark out</button>
-          <span class="num">{markOut == null ? '–' : gameClock(markOut)}</span>
-          {#if range}<span class="muted num">{(range.to - range.from).toFixed(1)} s</span>{/if}
+          <button type="button" class="btn" onclick={() => mark('in')}>Mark in</button>
+          <span class="time">{markIn == null ? '–' : gameClock(markIn)}</span>
+          <button type="button" class="btn" onclick={() => mark('out')}>Mark out</button>
+          <span class="time">{markOut == null ? '–' : gameClock(markOut)}</span>
+          {#if range}<span class="muted">{(range.to - range.from).toFixed(1)} s</span>{/if}
+          <span class="grow"></span>
+          {#if markIn != null || markOut != null}
+            <button type="button" class="btn ghost" onclick={() => ((markIn = null), (markOut = null))}>Clear</button>
+          {/if}
           <button
             type="button"
-            class="save"
+            class="btn primary"
             disabled={!range || saving != null}
             onclick={() => saveClip('range', range.from, range.to, 'clip', null)}
           >
+            <Icon name="scissors" />
             {saving === 'range' ? 'Saving…' : 'Save clip'}
           </button>
-          {#if markIn != null || markOut != null}
-            <button type="button" class="link" onclick={() => ((markIn = null), (markOut = null))}>clear</button>
-          {/if}
         </div>
         {#if saveError?.key === 'range'}<p class="error small">{saveError.text}</p>{/if}
       {/if}
       {#if match.source === 'outplayed'}
-        <div class="muted small">Recorded by Outplayed: {match.recording?.path}</div>
+        <div class="muted small info">Recorded by Outplayed: {match.recording?.path}</div>
       {:else if recording}
-        <div class="muted small">
+        <div class="muted small info">
           {recording.width}×{recording.height} · {recording.fps} fps · {recording.encoder}
           {#if recording.droppedFrames}· {recording.droppedFrames} dropped frames{/if}
           {#if recording.error}· the recording ended early ({recording.error}){/if}
@@ -404,9 +410,9 @@
 
   {#if clips.length}
     <section class="card">
-      <h3>Clips <span class="muted">{clips.length}</span></h3>
+      <h2>Clips <span class="count">{clips.length}</span></h2>
       {#if clipError}<p class="error small">{clipError}</p>{/if}
-      {#if clipNotice}<p class="notice small">{clipNotice}</p>{/if}
+      {#if clipNotice}<p class="notice">{clipNotice}</p>{/if}
       <ul class="clips">
         {#each clips as c, i (c.file)}
           <li class:current={shown?.file === c.file}>
@@ -420,8 +426,9 @@
               {#if c.thumbnailPath}
                 <img src={convertFileSrc(c.thumbnailPath)} alt="" loading="lazy" />
               {:else}
-                <span class="nothumb">{c.path ? '▶' : 'missing'}</span>
+                <span class="nothumb">{c.path ? '' : 'File missing'}</span>
               {/if}
+              {#if c.path}<span class="overlay"><Icon name="play" size={30} /></span>{/if}
               <span class="length">{Math.round(c.toS - c.fromS)} s</span>
             </button>
             <div class="clip-info">
@@ -431,44 +438,53 @@
             <div class="clip-actions">
               <button
                 type="button"
-                class="icon"
+                class="icon-btn"
                 class:on={c.favorite}
                 aria-pressed={c.favorite}
+                aria-label="Favorite clip {i + 1}"
                 title={c.favorite ? 'Favorite' : 'Mark as favorite'}
-                onclick={() => toggleFavorite(c)}>{c.favorite ? '★' : '☆'}</button
+                onclick={() => toggleFavorite(c)}><Icon name={c.favorite ? 'star-filled' : 'star'} /></button
               >
               <button
                 type="button"
-                class="icon"
+                class="icon-btn"
                 disabled={!c.path}
                 title="Show in Explorer"
                 aria-label="Show clip {i + 1} in Explorer"
-                onclick={() => reveal(c)}>📂</button
+                onclick={() => reveal(c)}><Icon name="folder" /></button
               >
               <button
                 type="button"
-                class="icon"
+                class="icon-btn"
                 disabled={!c.path}
-                title="Copy (paste it anywhere)"
+                title="Copy (paste it in Explorer, Discord or a chat)"
                 aria-label="Copy clip {i + 1}"
-                onclick={() => copyClip(c)}>📋</button
+                onclick={() => copyClip(c)}><Icon name="copy" /></button
               >
               <button
                 type="button"
-                class="icon"
+                class="icon-btn"
                 disabled={!c.path}
                 title="Save a copy as…"
                 aria-label="Save a copy of clip {i + 1}"
-                onclick={() => exportClip(c)}>💾</button
+                onclick={() => exportClip(c)}><Icon name="download" /></button
               >
-              <button
-                type="button"
-                class="icon recycle"
-                class:confirm={confirming === c.file}
-                title="Move to the Recycle Bin"
-                aria-label={confirming === c.file ? `Confirm: recycle clip ${i + 1}` : `Recycle clip ${i + 1}`}
-                onclick={() => recycleClip(c)}>{confirming === c.file ? 'Recycle?' : '🗑'}</button
-              >
+              {#if confirming === c.file}
+                <button
+                  type="button"
+                  class="btn small danger recycle"
+                  aria-label="Confirm: recycle clip {i + 1}"
+                  onclick={() => recycleClip(c)}>Recycle?</button
+                >
+              {:else}
+                <button
+                  type="button"
+                  class="icon-btn recycle"
+                  title="Move to the Recycle Bin"
+                  aria-label="Recycle clip {i + 1}"
+                  onclick={() => recycleClip(c)}><Icon name="trash" /></button
+                >
+              {/if}
             </div>
           </li>
         {/each}
@@ -477,18 +493,18 @@
   {/if}
 
   <section class="card">
-    <h3>Timeline</h3>
+    <h2>Timeline</h2>
     <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
     <svg
-      viewBox="0 0 1000 86"
+      viewBox="0 0 1000 112"
       role="group"
       aria-label="Moments and markers over the match"
       class:seekable={videoSrc}
       onclick={seekTimeline}
     >
       {#each gridlines as minute (minute)}
-        <line class="grid" x1={x(minute)} x2={x(minute)} y1="4" y2="64" />
-        <text x={x(minute)} y="80" text-anchor={minute === 0 ? 'start' : x(minute) > 960 ? 'end' : 'middle'}>
+        <line class="grid" x1={x(minute)} x2={x(minute)} y1="4" y2="84" />
+        <text x={x(minute)} y="104" text-anchor={minute === 0 ? 'start' : x(minute) > 960 ? 'end' : 'middle'}>
           {clock(minute)}
         </text>
       {/each}
@@ -499,9 +515,9 @@
             class="band {category(moment.label)} live"
             x={x(moment.startS)}
             y="10"
-            width={Math.max(3, x(moment.endS) - x(moment.startS))}
-            height="30"
-            rx="4"
+            width={Math.max(4, x(moment.endS) - x(moment.startS))}
+            height="38"
+            rx="6"
             role="button"
             tabindex="0"
             aria-label="Play {words(moment.label)} from {clock(moment.startS)}"
@@ -514,9 +530,9 @@
             class="band {category(moment.label)}"
             x={x(moment.startS)}
             y="10"
-            width={Math.max(3, x(moment.endS) - x(moment.startS))}
-            height="30"
-            rx="4"
+            width={Math.max(4, x(moment.endS) - x(moment.startS))}
+            height="38"
+            rx="6"
           >
             <title>{words(moment.label)} {clock(moment.startS)}–{clock(moment.endS)}</title>
           </rect>
@@ -528,8 +544,8 @@
           <circle
             class="{category(marker.label)} live"
             cx={x(marker.gameTimeS)}
-            cy="52"
-            r="5"
+            cy="66"
+            r="7"
             role="button"
             tabindex="0"
             aria-label="Play {words(marker.label)} at {clock(marker.gameTimeS)}"
@@ -538,7 +554,7 @@
             <title>{words(marker.label)} at {clock(marker.gameTimeS)}</title>
           </circle>
         {:else}
-          <circle class={category(marker.label)} cx={x(marker.gameTimeS)} cy="52" r="5">
+          <circle class={category(marker.label)} cx={x(marker.gameTimeS)} cy="66" r="7">
             <title>{words(marker.label)} at {clock(marker.gameTimeS)}</title>
           </circle>
         {/if}
@@ -549,40 +565,42 @@
           x={x(range.from + offset)}
           y="6"
           width={Math.max(2, x(range.to + offset) - x(range.from + offset))}
-          height="38"
-          rx="4"
+          height="46"
+          rx="6"
         >
           <title>marked for a clip: {gameClock(range.from)}–{gameClock(range.to)}</title>
         </rect>
       {/if}
       {#if playhead != null}
-        <line class="playhead" x1={x(playhead)} x2={x(playhead)} y1="2" y2="66" />
+        <line class="playhead" x1={x(playhead)} x2={x(playhead)} y1="2" y2="86" />
       {/if}
     </svg>
     <div class="legend">
-      <span class="fight"><i></i>kills and fights</span>
-      <span class="objective"><i></i>objectives</span>
-      <span class="assist"><i></i>assists</span>
-      <span class="death"><i></i>deaths</span>
-      <span class="win"><i></i>victory</span>
+      <span class="fight"><i></i>Kills and fights</span>
+      <span class="objective"><i></i>Objectives</span>
+      <span class="assist"><i></i>Assists</span>
+      <span class="death"><i></i>Deaths</span>
+      <span class="win"><i></i>Victory</span>
       {#if videoSrc}
-        <span>click a moment, a marker or anywhere on the timeline to watch it; ✂ saves a moment as a clip</span>
+        <span class="hint">Click a moment, a marker or anywhere on the timeline to watch it.</span>
       {:else if playerSrc}
-        <span>click a moment or a marker to watch its clip</span>
+        <span class="hint">Click a moment or a marker to watch its clip.</span>
       {/if}
     </div>
   </section>
 
   <section class="card">
-    <h3>Moments</h3>
+    <h2>Moments <span class="count">{match.moments.length}</span></h2>
     {#if typeof saveError?.key === 'number'}<p class="error small">{saveError.text}</p>{/if}
     {#if match.moments.length}
       <table>
         <thead>
           <tr>
-            {#if playerSrc}<th class="act"><span class="sr">play</span></th>{/if}
-            {#if videoSrc}<th class="act"><span class="sr">clip</span></th>{/if}
-            <th class="num">#</th><th>highlight</th><th class="num">from</th><th class="num">to</th><th class="num">length</th><th class="num">markers</th>
+            {#if playerSrc}<th class="act"><span class="sr">Play</span></th>{/if}
+            {#if videoSrc}<th class="act"><span class="sr">Clip</span></th>{/if}
+            <th class="num">#</th><th>Highlight</th><th class="num">From</th><th class="num">To</th><th class="num"
+              >Length</th
+            ><th class="num">Markers</th>
           </tr>
         </thead>
         <tbody>
@@ -594,7 +612,13 @@
               {#if playerSrc}
                 <td class="act">
                   {#if playable(start)}
-                    <button type="button" class="play" aria-label="Play moment {i + 1}" onclick={() => seek(start)}>▶</button>
+                    <button
+                      type="button"
+                      class="icon-btn round"
+                      title="Play"
+                      aria-label="Play moment {i + 1}"
+                      onclick={() => seek(start)}><Icon name="play" size={18} /></button
+                    >
                   {/if}
                 </td>
               {/if}
@@ -603,24 +627,25 @@
                   {#if saved}
                     <button
                       type="button"
-                      class="play"
+                      class="icon-btn round done"
                       title="Saved as a clip: play it"
                       aria-label="Play the clip of moment {i + 1}"
-                      onclick={() => show(saved)}>✓</button
+                      onclick={() => show(saved)}><Icon name="check" size={18} /></button
                     >
                   {:else if start != null && end != null}
                     <button
                       type="button"
-                      class="play"
+                      class="icon-btn round"
                       title="Save as a clip"
                       aria-label="Save moment {i + 1} as a clip"
                       disabled={saving != null}
-                      onclick={() => saveMoment(moment, i)}>{saving === i ? '…' : '✂'}</button
+                      onclick={() => saveMoment(moment, i)}
+                      >{#if saving === i}…{:else}<Icon name="scissors" size={18} />{/if}</button
                     >
                   {/if}
                 </td>
               {/if}
-              <td class="num">{i + 1}</td>
+              <td class="num muted">{i + 1}</td>
               <td class={category(moment.label)}><i></i><span class="label">{words(moment.label)}</span></td>
               <td class="num">{clock(moment.startS)}</td>
               <td class="num">{clock(moment.endS)}</td>
@@ -642,8 +667,10 @@
         <table>
           <thead>
             <tr>
-              {#if playerSrc}<th class="act"><span class="sr">play</span></th>{/if}
-              <th class="num">time</th><th>marker</th><th>type</th><th class="num">window</th><th class="num">Riot events</th>
+              {#if playerSrc}<th class="act"><span class="sr">Play</span></th>{/if}
+              <th class="num">Time</th><th>Marker</th><th>Type</th><th class="num">Window</th><th class="num"
+                >Riot events</th
+              >
             </tr>
           </thead>
           <tbody>
@@ -653,7 +680,13 @@
                 {#if playerSrc}
                   <td class="act">
                     {#if playable(start)}
-                      <button type="button" class="play" aria-label="Play {words(marker.label)} at {clock(marker.gameTimeS)}" onclick={() => seek(start)}>▶</button>
+                      <button
+                        type="button"
+                        class="icon-btn round"
+                        title="Play"
+                        aria-label="Play {words(marker.label)} at {clock(marker.gameTimeS)}"
+                        onclick={() => seek(start)}><Icon name="play" size={18} /></button
+                      >
                     {/if}
                   </td>
                 {/if}
@@ -674,7 +707,7 @@
     </section>
   {/if}
   {#if !videoSrc}
-    <p class="muted small">
+    <p class="muted novideo">
       {#if match.source === 'recording'}
         Fixture recordings have no video.
       {:else if match.source === 'outplayed' && !match.videoRemoved}
@@ -695,129 +728,150 @@
 {/if}
 
 <style>
-  nav {
-    margin: 4px 0 12px;
+  .topbar {
+    margin: -6px 0 14px -10px;
   }
-  .back {
-    border: 1px solid var(--line);
-    background: var(--card);
-    color: var(--text);
-    border-radius: 999px;
-    padding: 4px 12px;
-    font: inherit;
-    cursor: pointer;
+  .small {
+    font-size: 14px;
   }
-  .back:hover {
-    background: var(--hover);
+  .count {
+    margin-left: 6px;
+    color: var(--muted);
+    font-weight: 500;
   }
+
+  /* Header. */
   .head {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    gap: 16px 32px;
+    gap: 20px 40px;
+    border-left: 5px solid var(--line);
   }
-  .who h2 {
+  .head.won {
+    border-left-color: var(--win);
+  }
+  .head.lost {
+    border-left-color: var(--lose);
+  }
+  .who {
+    flex: 1 1 260px;
+    min-width: 0;
+  }
+  .title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .title h1 {
     margin: 0;
-    font-size: 22px;
+    font-size: 34px;
+    line-height: 1.15;
   }
-  .small {
-    font-size: 12px;
-    margin-top: 2px;
+  .sub {
+    margin-top: 4px;
+    color: var(--muted);
+    font-size: 16px;
   }
   .badge {
-    display: inline-block;
-    padding: 4px 12px;
+    display: inline-flex;
+    align-items: center;
+    height: 38px;
+    padding: 0 18px;
     border-radius: 999px;
-    font-weight: 700;
-    background: var(--line);
+    font-size: 15px;
+    font-weight: 800;
+    letter-spacing: 0.8px;
+    text-transform: uppercase;
+    background: var(--raised);
+    border: 1px solid var(--line);
   }
-  .badge.win {
+  .head.won .badge {
     background: var(--win);
+    border-color: var(--win);
     color: var(--on-strong);
   }
-  .badge.lose {
+  .head.lost .badge {
     background: var(--lose);
+    border-color: var(--lose);
     color: var(--on-strong);
+  }
+  .outcome .small {
+    margin-top: 6px;
   }
   .stats {
     display: flex;
-    gap: 24px;
+    gap: 34px;
     flex-wrap: wrap;
   }
+  .stats div {
+    display: grid;
+    gap: 2px;
+  }
   .stats b {
-    display: block;
-    font-size: 18px;
+    font-size: 26px;
     font-variant-numeric: tabular-nums;
+    line-height: 1.15;
   }
   .stats span {
     color: var(--muted);
-    font-size: 12px;
+    font-size: 13px;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
   }
+
+  /* Player. */
   .player video {
     display: block;
     width: 100%;
     aspect-ratio: 16 / 9;
+    max-height: 72vh;
     background: #000;
-    border-radius: 6px;
-    margin-bottom: 6px;
-  }
-  .trim {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 6px 10px;
-    margin: 4px 0 8px;
-    font-size: 13px;
-  }
-  .trim .num {
-    min-width: 3.2em;
-  }
-  .save {
-    border: 0;
-    border-radius: 999px;
-    padding: 5px 14px;
-    background: var(--accent);
-    color: var(--on-strong);
-    font: inherit;
-    font-weight: 600;
-    cursor: pointer;
-  }
-  .save:disabled {
-    opacity: 0.45;
-    cursor: default;
-  }
-  .link {
-    border: 0;
-    background: none;
-    padding: 0;
-    color: var(--muted);
-    font: inherit;
-    text-decoration: underline;
-    cursor: pointer;
-  }
-  .play:disabled {
-    opacity: 0.45;
-    cursor: default;
+    border-radius: 10px;
   }
   .playing {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 12px;
-    margin-bottom: 8px;
+    gap: 14px;
+    margin-bottom: 12px;
+    font-size: 16px;
   }
+  .trim {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px 12px;
+    margin: 16px 0 6px;
+    font-size: 15px;
+  }
+  .trim .time {
+    min-width: 4.2em;
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+  }
+  .grow {
+    flex: 1;
+  }
+  .info {
+    margin-top: 10px;
+    overflow-wrap: anywhere;
+  }
+
+  /* Clips. */
   .clips {
     list-style: none;
     margin: 0;
     padding: 0;
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-    gap: 12px;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: 18px;
   }
   .clips li {
     border: 1px solid var(--line);
-    border-radius: 8px;
+    border-radius: 12px;
     overflow: hidden;
+    background: var(--raised);
   }
   .clips li.current {
     border-color: var(--accent);
@@ -845,42 +899,40 @@
     object-fit: cover;
   }
   .nothumb {
-    font-size: 13px;
+    font-size: 14px;
+  }
+  .overlay {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.25);
+    opacity: 0;
+    transition: opacity 120ms;
+  }
+  .thumb:hover .overlay,
+  .thumb:focus-visible .overlay {
+    opacity: 1;
   }
   .length {
     position: absolute;
-    right: 6px;
-    bottom: 6px;
-    padding: 1px 6px;
-    border-radius: 4px;
-    background: rgba(0, 0, 0, 0.7);
+    right: 8px;
+    bottom: 8px;
+    padding: 2px 8px;
+    border-radius: 6px;
+    background: rgba(0, 0, 0, 0.72);
     color: #fff;
-    font-size: 11px;
+    font-size: 13px;
+    font-weight: 600;
     font-variant-numeric: tabular-nums;
   }
   .clip-info {
     display: flex;
     align-items: center;
-    gap: 6px;
-    padding: 6px 8px 0;
-    font-size: 12px;
-  }
-  .clip-actions {
-    display: flex;
-    gap: 2px;
-    padding: 2px 4px 4px;
-  }
-  .recycle {
-    margin-left: auto;
-  }
-  .recycle.confirm {
-    color: var(--lose);
-    font-size: 12px;
-    font-weight: 600;
-  }
-  .notice {
-    color: var(--accent);
-    margin: 0 0 8px;
+    gap: 8px;
+    padding: 12px 14px 4px;
+    font-size: 16px;
   }
   .clip-info .name {
     flex: 1;
@@ -889,37 +941,21 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  .icon {
-    border: 0;
-    background: none;
-    color: var(--muted);
-    border-radius: 4px;
-    padding: 2px 4px;
-    font: inherit;
-    font-size: 15px;
-    line-height: 1;
-    cursor: pointer;
+  .clip-actions {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    padding: 4px 8px 10px;
   }
-  .icon:hover,
-  .icon:focus-visible {
-    background: var(--hover);
-    color: var(--text);
+  .recycle {
+    margin-left: auto;
   }
-  .icon.on {
-    color: var(--warn);
+  .notice {
+    color: var(--accent);
+    margin: 0 0 12px;
   }
-  .star {
-    font-size: 20px;
-    vertical-align: 2px;
-  }
-  .icon:disabled {
-    opacity: 0.4;
-    cursor: default;
-  }
-  h3 {
-    margin: 0 0 10px;
-    font-size: 14px;
-  }
+
+  /* Timeline. */
   svg {
     display: block;
     width: 100%;
@@ -930,17 +966,17 @@
   }
   svg text {
     fill: var(--muted);
-    font-size: 11px;
+    font-size: 12px;
   }
   .grid {
     stroke: var(--line);
   }
   rect.band {
-    opacity: 0.45;
+    opacity: 0.5;
   }
   .live:hover,
   .live:focus-visible {
-    opacity: 0.85;
+    opacity: 0.9;
     outline: none;
   }
   circle.live:hover,
@@ -949,7 +985,7 @@
   }
   .playhead {
     stroke: var(--text);
-    stroke-width: 2;
+    stroke-width: 2.5;
     pointer-events: none;
   }
   rect.marked {
@@ -961,7 +997,7 @@
   }
   circle {
     stroke: var(--card);
-    stroke-width: 1.5;
+    stroke-width: 2;
   }
   .fight {
     fill: var(--fight);
@@ -990,21 +1026,24 @@
   .legend {
     display: flex;
     flex-wrap: wrap;
-    gap: 14px;
-    margin-top: 6px;
-    font-size: 12px;
-    color: var(--muted);
+    gap: 8px 20px;
+    margin-top: 10px;
+    font-size: 14px;
   }
   .legend span {
     color: var(--muted);
   }
+  .hint {
+    flex-basis: 100%;
+  }
   i {
     display: inline-block;
-    width: 10px;
-    height: 10px;
-    border-radius: 3px;
-    margin-right: 6px;
+    width: 12px;
+    height: 12px;
+    border-radius: 4px;
+    margin-right: 8px;
     background: currentColor;
+    vertical-align: -1px;
   }
   .legend .fight i {
     background: var(--fight);
@@ -1021,20 +1060,28 @@
   .legend .win i {
     background: var(--win);
   }
+
+  /* Tables. */
   table {
     width: 100%;
     border-collapse: collapse;
+    font-size: 15px;
   }
   th {
     text-align: left;
     color: var(--muted);
     font-weight: 600;
-    font-size: 12px;
+    font-size: 13px;
+    letter-spacing: 0.4px;
+    text-transform: uppercase;
   }
   th,
   td {
-    padding: 6px 8px;
+    padding: 8px 10px;
     border-bottom: 1px solid var(--line);
+  }
+  tbody tr:hover {
+    background: var(--hover);
   }
   .num {
     text-align: right;
@@ -1042,23 +1089,17 @@
     white-space: nowrap;
   }
   .act {
-    width: 28px;
+    width: 52px;
     padding-right: 0;
   }
-  .play {
-    border: 1px solid var(--line);
-    background: var(--card);
+  .icon-btn.round {
+    border-radius: 50%;
+    border-color: var(--line);
+    background: var(--raised);
     color: var(--accent);
-    border-radius: 999px;
-    width: 26px;
-    height: 26px;
-    padding: 0;
-    font-size: 11px;
-    cursor: pointer;
   }
-  .play:hover,
-  .play:focus-visible {
-    background: var(--hover);
+  .icon-btn.round.done {
+    color: var(--win);
   }
   .sr {
     position: absolute;
@@ -1075,8 +1116,12 @@
   details summary {
     cursor: pointer;
     font-weight: 600;
+    font-size: 17px;
   }
-  .error {
-    color: var(--lose);
+  details table {
+    margin-top: 12px;
+  }
+  .novideo {
+    font-size: 15px;
   }
 </style>

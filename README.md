@@ -177,6 +177,8 @@ src-tauri/tests/             fake HTTPS Live Client API + fake LCU, end-to-end r
 fixtures/lol/                synthetic Live Client / LCU fixtures and expected replay output
 ui/                          Vite + Svelte window: status, matches, review with video
 tools/fetch-ffmpeg.ps1       pinned LGPL ffmpeg build (URL + SHA-256)
+tools/install-local.ps1      release build installed for this user, Start menu shortcut
+tools/make-icons.py          draws the icon set in src-tauri/icons (Pillow)
 ```
 
 Downplayed isn't endorsed by Riot Games and doesn't reflect the views or opinions of

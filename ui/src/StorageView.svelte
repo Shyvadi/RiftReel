@@ -3,8 +3,10 @@
   import { invoke } from '@tauri-apps/api/core';
   import { listen } from '@tauri-apps/api/event';
   import { size, when } from './lib/format.js';
+  import Icon from './lib/Icon.svelte';
 
-  let { onBack, onOpen } = $props();
+  /** `folders`: where the library, recordings, settings and logs are. */
+  let { onOpen, folders } = $props();
 
   let overview = $state(null);
   let error = $state('');
@@ -198,9 +200,9 @@
     removal.reason === 'age' ? `older than ${saved?.keepDays ?? '?'} days` : 'over the size limit';
 </script>
 
-<nav>
-  <button type="button" class="back" onclick={onBack}>← All matches</button>
-</nav>
+<header class="page-head">
+  <h1>Storage</h1>
+</header>
 
 {#if error}<p class="error">{error}</p>{/if}
 
@@ -208,7 +210,6 @@
   <p class="muted">Looking at the library…</p>
 {:else}
   <section class="card">
-    <h2>Storage</h2>
     <div class="usage">
       <div>
         <b>{size(plan.managedBytes)}</b>
@@ -234,52 +235,51 @@
   </section>
 
   <section class="card">
-    <h2>
-      Cleanup <span class="state" class:on={saved.cleanup}>{saved.cleanup ? 'on' : 'off'}</span>
-    </h2>
-    <p class="muted">
+    <div class="card-head">
+      <h2>Cleanup</h2>
+      <span class="state" class:on={saved.cleanup}>{saved.cleanup ? 'On' : 'Off'}</span>
+    </div>
+    <p class="lead muted">
       Sends full-match videos to the Recycle Bin after each match and every hour, never during a game. Clips are
       never removed, nor are favorites (★ in a match's review).
     </p>
     <div class="limits">
       <label>
-        Keep full matches for
-        <input type="number" min="0" step="1" bind:value={draft.keepDays} />
-        days
+        <span>Keep full matches for</span>
+        <span class="field"><input type="number" min="0" step="1" bind:value={draft.keepDays} /> days</span>
       </label>
       <label>
-        and at most
-        <input type="number" min="0" step="10" bind:value={draft.fullMatchesGb} />
-        GB of them
+        <span>and at most</span>
+        <span class="field"><input type="number" min="0" step="10" bind:value={draft.fullMatchesGb} /> GB of them</span>
       </label>
       <label>
-        Warn when clips pass
-        <input type="number" min="0" step="10" bind:value={draft.clipsWarnGb} />
-        GB
+        <span>Warn when clips pass</span>
+        <span class="field"><input type="number" min="0" step="10" bind:value={draft.clipsWarnGb} /> GB</span>
       </label>
-      <span class="muted small">0: no limit.</span>
     </div>
+    <p class="muted small">0 means no limit.</p>
     {#if !valid}<p class="error small">Days are whole numbers; none of these can be negative.</p>{/if}
     {#if !overview.settingsWritable}
       <p class="error small">The settings file couldn't be read when Downplayed started, so it can't be changed here.</p>
     {/if}
     <div class="actions">
       {#if saved.cleanup}
-        <button type="button" class="save" disabled={busy || overview.gameRunning} onclick={runNow}>
+        <button type="button" class="btn primary" disabled={busy || overview.gameRunning} onclick={runNow}>
+          <Icon name="sweep" />
           {busy ? 'Cleaning up…' : 'Clean up now'}
         </button>
-        {#if edited}<button type="button" class="back" disabled={busy || !valid} onclick={() => save(true)}>Save</button>{/if}
-        <button type="button" class="back" disabled={busy || !valid} onclick={() => save(false)}>Turn off</button>
+        {#if edited}<button type="button" class="btn" disabled={busy || !valid} onclick={() => save(true)}>Save</button>{/if}
+        <button type="button" class="btn" disabled={busy || !valid} onclick={() => save(false)}>Turn off</button>
       {:else}
-        <button type="button" class="save" disabled={busy || pending || !valid || confirming} onclick={turnOn}>
+        <button type="button" class="btn primary" disabled={busy || pending || !valid || confirming} onclick={turnOn}>
           Turn on…
         </button>
-        {#if edited}<button type="button" class="back" disabled={busy || !valid} onclick={() => save(false)}>Save</button>{/if}
+        {#if edited}<button type="button" class="btn" disabled={busy || !valid} onclick={() => save(false)}>Save</button>{/if}
       {/if}
       {#if edited}
-        <button type="button" class="link" onclick={() => (draft = { ...saved })}>undo changes</button>
+        <button type="button" class="btn ghost" onclick={() => (draft = { ...saved })}>Undo changes</button>
       {/if}
-      {#if overview.gameRunning}<span class="muted small">not while League is running</span>{/if}
+      {#if overview.gameRunning}<span class="muted small">Not while League is running.</span>{/if}
     </div>
     {#if confirming}
       <div class="confirm" role="alertdialog" aria-label="Turn the cleanup on">
@@ -287,15 +287,15 @@
           This sends the {plural(plan.removals.length, 'video', 'videos')} below ({size(plan.freedBytes)}) to the
           Recycle Bin now, and keeps to these limits after each match.
         </span>
-        <button type="button" class="save" disabled={busy} onclick={() => save(true)}>Turn on</button>
-        <button type="button" class="back" onclick={() => (confirming = false)}>Cancel</button>
+        <button type="button" class="btn primary" disabled={busy} onclick={() => save(true)}>Turn on</button>
+        <button type="button" class="btn" onclick={() => (confirming = false)}>Cancel</button>
       </div>
     {/if}
-    {#if message}<p class="done small">{message}</p>{/if}
+    {#if message}<p class="done">{message}</p>{/if}
 
-    <h3>Dry run{edited ? ', with the limits above (not saved)' : ''}</h3>
+    <h3 class="dry">Dry run{edited ? ', with the limits above (not saved)' : ''}</h3>
     {#if pending}
-      <p class="muted small">Working it out…</p>
+      <p class="muted">Working it out…</p>
     {:else if plan.removals.length}
       <p>
         If it ran now, it would send <b>{plural(plan.removals.length, 'full-match video', 'full-match videos')}</b>
@@ -311,10 +311,10 @@
             <span class="muted">{reason(removal)}</span>
             <button
               type="button"
-              class="icon"
+              class="icon-btn"
               title="Keep it: make it a favorite"
               aria-label="Keep the match of {when(removal.whenMs)}"
-              onclick={() => act('keep', removal.id)}>☆</button
+              onclick={() => act('keep', removal.id)}><Icon name="star" /></button
             >
           </li>
         {/each}
@@ -343,69 +343,6 @@
     {/if}
   </section>
 
-  <section class="card">
-    <h2>Outplayed</h2>
-    {#each overview.imports as item (item.id)}
-      <div class="import">
-        <div>
-          <b>{item.root}</b>
-          <span class="muted">{plural(item.matches, 'video', 'videos')} imported, last on {when(item.atMs)}</span>
-        </div>
-        <div class="actions">
-          {#if item.cleanup}
-            <span class="small">The cleanup may send these videos to the Recycle Bin.</span>
-            <button type="button" class="back" onclick={() => importCleanup(item, false)}>Stop that</button>
-          {:else}
-            <span class="muted small">The cleanup leaves these videos alone.</span>
-            <button type="button" class="back" onclick={() => importCleanup(item, true)}>Let it remove them…</button>
-          {/if}
-        </div>
-        {#if allowing === item.id}
-          <div class="confirm" role="alertdialog" aria-label="Let the cleanup remove imported videos">
-            <span>
-              When it is on, the cleanup will send this import's old videos from {item.root} to the Recycle Bin, by the
-              same limits as Downplayed's own. Favorites stay.
-            </span>
-            <button type="button" class="save" onclick={() => importCleanup(item, true)}>Allow</button>
-            <button type="button" class="back" onclick={() => (allowing = null)}>Cancel</button>
-          </div>
-        {/if}
-      </div>
-    {/each}
-    <p class="muted">
-      Imports an Outplayed library's League videos where they are: Downplayed lists, plays and clips them, and changes
-      nothing in the Outplayed folder.
-    </p>
-    <div class="actions">
-      <input class="path" type="text" bind:value={folder} placeholder="D:\Outplayed" aria-label="Outplayed folder" />
-      <button type="button" class="back" disabled={!folder.trim() || surveying || importing} onclick={look}>
-        {surveying ? 'Looking…' : 'Look'}
-      </button>
-    </div>
-    {#if survey}
-      <p>
-        {plural(survey.videos, 'League video', 'League videos')} ({size(survey.bytes)}){survey.already
-          ? `, ${survey.already} imported before`
-          : ''}: <b>{survey.new} new</b> ({size(survey.newBytes)}).
-      </p>
-      <p class="muted small">
-        {#if survey.export}
-          Outplayed's records ({survey.records}) give {survey.joined} of them a champion, K/D/A or markers
-          ({plural(survey.markers, 'marker', 'markers')}); the rest have their date and length only.
-        {:else}
-          No Outplayed records next to them: dates and lengths only.
-        {/if}
-        Results: {survey.wins} won, {survey.unknownResults} unknown (a loss is never guessed).
-      </p>
-      {#if survey.new}
-        <button type="button" class="save" disabled={importing || overview.gameRunning} onclick={importNow}>
-          {importing ? 'Importing…' : `Import ${plural(survey.new, 'video', 'videos')}`}
-        </button>
-      {/if}
-    {/if}
-    {#if imported}<p class="done small">{imported}</p>{/if}
-  </section>
-
   {#if overview.kept.length}
     <section class="card kept">
       <h2>Couldn't recycle</h2>
@@ -420,150 +357,214 @@
             <span>{kept.champion ?? 'Unknown champion'}</span>
             <span class="num">{size(kept.bytes)}</span>
             <span class="buttons">
-              <button type="button" class="back" onclick={() => act('reveal', kept.id)}>Show in Explorer</button>
-              <button type="button" class="back" onclick={() => act('keep', kept.id)}>Keep it</button>
-              <button type="button" class="back" onclick={() => act('retry', kept.id)}>Try again</button>
+              <button type="button" class="btn small" onclick={() => act('reveal', kept.id)}
+                ><Icon name="folder" size={18} /> Show in Explorer</button
+              >
+              <button type="button" class="btn small" onclick={() => act('keep', kept.id)}
+                ><Icon name="star" size={18} /> Keep it</button
+              >
+              <button type="button" class="btn small" onclick={() => act('retry', kept.id)}>Try again</button>
             </span>
           </li>
         {/each}
       </ul>
     </section>
   {/if}
+
+  <section class="card">
+    <h2>Outplayed</h2>
+    {#each overview.imports as item (item.id)}
+      <div class="import">
+        <div class="import-head">
+          <b>{item.root}</b>
+          <span class="muted">{plural(item.matches, 'video', 'videos')} imported, last on {when(item.atMs)}</span>
+        </div>
+        <div class="actions">
+          {#if item.cleanup}
+            <span>The cleanup may send these videos to the Recycle Bin.</span>
+            <button type="button" class="btn small" onclick={() => importCleanup(item, false)}>Stop that</button>
+          {:else}
+            <span class="muted">The cleanup leaves these videos alone.</span>
+            <button type="button" class="btn small" onclick={() => importCleanup(item, true)}>Let it remove them…</button>
+          {/if}
+        </div>
+        {#if allowing === item.id}
+          <div class="confirm" role="alertdialog" aria-label="Let the cleanup remove imported videos">
+            <span>
+              When it is on, the cleanup will send this import's old videos from {item.root} to the Recycle Bin, by the
+              same limits as Downplayed's own. Favorites stay.
+            </span>
+            <button type="button" class="btn primary" onclick={() => importCleanup(item, true)}>Allow</button>
+            <button type="button" class="btn" onclick={() => (allowing = null)}>Cancel</button>
+          </div>
+        {/if}
+      </div>
+    {/each}
+    <p class="lead muted">
+      Imports an Outplayed library's League videos where they are: Downplayed lists, plays and clips them, and changes
+      nothing in the Outplayed folder.
+    </p>
+    <div class="actions">
+      <input class="path" type="text" bind:value={folder} placeholder="D:\Outplayed" aria-label="Outplayed folder" />
+      <button type="button" class="btn" disabled={!folder.trim() || surveying || importing} onclick={look}>
+        {surveying ? 'Looking…' : 'Look'}
+      </button>
+    </div>
+    {#if survey}
+      <p class="survey">
+        {plural(survey.videos, 'League video', 'League videos')} ({size(survey.bytes)}){survey.already
+          ? `, ${survey.already} imported before`
+          : ''}: <b>{survey.new} new</b> ({size(survey.newBytes)}).
+      </p>
+      <p class="muted small">
+        {#if survey.export}
+          Outplayed's records ({survey.records}) give {survey.joined} of them a champion, K/D/A or markers
+          ({plural(survey.markers, 'marker', 'markers')}); the rest have their date and length only.
+        {:else}
+          No Outplayed records next to them: dates and lengths only.
+        {/if}
+        Results: {survey.wins} won, {survey.unknownResults} unknown (a loss is never guessed).
+      </p>
+      {#if survey.new}
+        <button type="button" class="btn primary" disabled={importing || overview.gameRunning} onclick={importNow}>
+          <Icon name="import" />
+          {importing ? 'Importing…' : `Import ${plural(survey.new, 'video', 'videos')}`}
+        </button>
+      {/if}
+    {/if}
+    {#if imported}<p class="done">{imported}</p>{/if}
+  </section>
+
+  <section class="card">
+    <h2>Folders</h2>
+    <dl class="folders">
+      <dt>Matches</dt>
+      <dd><code>{folders.matches}</code></dd>
+      <dt>Recordings</dt>
+      <dd><code>{folders.recordings}</code></dd>
+      <dt>Settings</dt>
+      <dd><code>{folders.settings}</code></dd>
+      <dt>Logs</dt>
+      <dd><code>{folders.logs}</code></dd>
+    </dl>
+    <p class="muted small">Closing the window leaves Downplayed running in the tray; Quit from the tray icon ends it.</p>
+  </section>
 {/if}
 
 <style>
-  nav {
-    margin: 4px 0 12px;
-  }
-  .back {
-    border: 1px solid var(--line);
-    background: var(--card);
-    color: var(--text);
-    border-radius: 999px;
-    padding: 4px 12px;
-    font: inherit;
-    cursor: pointer;
-  }
-  .back:hover {
-    background: var(--hover);
-  }
-  .back:disabled,
-  .save:disabled {
-    opacity: 0.45;
-    cursor: default;
-  }
-  .save {
-    border: 0;
-    border-radius: 999px;
-    padding: 5px 14px;
-    background: var(--accent);
-    color: var(--on-strong);
-    font: inherit;
-    font-weight: 600;
-    cursor: pointer;
-  }
-  .link {
-    border: 0;
-    background: none;
-    padding: 0;
-    color: var(--text);
-    font: inherit;
-    text-decoration: underline;
-    cursor: pointer;
-  }
-  .icon {
-    border: 0;
-    background: none;
-    color: var(--muted);
-    border-radius: 4px;
-    padding: 2px 4px;
-    font: inherit;
-    font-size: 15px;
-    line-height: 1;
-    cursor: pointer;
-  }
-  .icon:hover,
-  .icon:focus-visible {
-    background: var(--hover);
-    color: var(--warn);
-  }
-  h3 {
-    margin: 16px 0 8px;
+  .small {
     font-size: 14px;
+  }
+  .lead {
+    margin: 0 0 18px;
+    font-size: 15px;
+    max-width: 70ch;
+  }
+  .card-head {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 8px;
+  }
+  .card-head h2 {
+    margin: 0;
+  }
+  .dry {
+    margin: 30px 0 10px;
+    font-size: 17px;
   }
   .usage {
     display: flex;
     flex-wrap: wrap;
-    gap: 12px 32px;
+    gap: 18px 48px;
+  }
+  .usage div {
+    display: grid;
+    gap: 2px;
   }
   .usage b {
-    display: block;
-    font-size: 18px;
+    font-size: 30px;
+    line-height: 1.15;
     font-variant-numeric: tabular-nums;
   }
   .usage span {
     color: var(--muted);
-    font-size: 12px;
+    font-size: 15px;
   }
   .warn {
     color: var(--warn);
-    margin: 10px 0 0;
+    margin: 16px 0 0;
   }
   .state {
-    margin-left: 6px;
-    padding: 1px 8px;
+    display: inline-flex;
+    align-items: center;
+    height: 28px;
+    padding: 0 12px;
     border-radius: 999px;
-    background: var(--line);
-    font-size: 12px;
-    font-weight: 600;
+    background: var(--raised);
+    border: 1px solid var(--line);
+    color: var(--muted);
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 0.6px;
+    text-transform: uppercase;
   }
   .state.on {
     background: var(--accent);
-    color: var(--on-strong);
+    border-color: var(--accent);
+    color: var(--on-accent);
   }
   .limits {
     display: flex;
     flex-wrap: wrap;
+    gap: 14px 32px;
+  }
+  .limits label {
+    display: grid;
+    gap: 6px;
+    font-size: 15px;
+  }
+  .limits label > span:first-child {
+    color: var(--muted);
+  }
+  .field {
+    display: inline-flex;
     align-items: center;
-    gap: 8px 18px;
-    margin: 10px 0;
+    gap: 10px;
   }
   .limits input {
-    width: 5.5em;
-    font: inherit;
-    padding: 2px 6px;
-    border: 1px solid var(--line);
-    border-radius: 6px;
-    background: var(--card);
-    color: var(--text);
+    width: 7em;
   }
   .actions {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    gap: 8px 10px;
+    gap: 10px 12px;
+    margin-top: 14px;
   }
   .confirm {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    gap: 8px 10px;
-    margin-top: 10px;
-    padding: 10px 12px;
+    gap: 10px 12px;
+    margin-top: 14px;
+    padding: 14px 16px;
     border: 1px solid var(--warn);
-    border-radius: 8px;
+    border-radius: var(--radius-sm);
+    background: var(--raised);
   }
   .confirm span {
-    flex: 1 1 260px;
+    flex: 1 1 320px;
   }
   .done {
     color: var(--accent);
+    font-weight: 600;
   }
   .rows {
     list-style: none;
     margin: 0;
     padding: 0;
-    max-height: 340px;
+    max-height: 420px;
     overflow-y: auto;
     border-top: 1px solid var(--line);
   }
@@ -571,50 +572,87 @@
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    gap: 4px 14px;
-    padding: 6px 2px;
+    gap: 6px 16px;
+    min-height: 52px;
+    padding: 6px 4px;
     border-bottom: 1px solid var(--line);
-  }
-  .rows .num {
-    margin-left: auto;
-    font-variant-numeric: tabular-nums;
+    font-size: 15px;
   }
   .rows li.removal {
     display: grid;
-    grid-template-columns: minmax(11em, auto) minmax(6em, 1fr) 5.5em minmax(9em, auto) 2em;
+    grid-template-columns: minmax(13em, auto) minmax(6em, 1fr) 6em minmax(10em, auto) 40px;
   }
-  .removal .num {
+  .rows .num {
+    margin-left: auto;
     text-align: right;
-  }
-  .rows .link {
-    justify-self: start;
-    text-align: left;
+    font-variant-numeric: tabular-nums;
   }
   .rows .buttons {
     display: flex;
-    gap: 6px;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .link {
+    justify-self: start;
+    border: 0;
+    background: none;
+    padding: 0;
+    color: var(--text);
+    font: inherit;
+    font-weight: 600;
+    text-align: left;
+    text-decoration: underline;
+    text-decoration-color: var(--line);
+    text-underline-offset: 3px;
+    cursor: pointer;
+  }
+  .link:hover {
+    text-decoration-color: var(--accent);
   }
   .kept {
     border-color: var(--warn);
   }
   .import {
-    padding: 8px 0;
+    padding: 4px 0 16px;
+    margin-bottom: 16px;
     border-bottom: 1px solid var(--line);
-    margin-bottom: 8px;
+  }
+  .import-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 6px 14px;
+    font-size: 16px;
+  }
+  .import .actions {
+    margin-top: 10px;
+    font-size: 15px;
   }
   .path {
-    flex: 1 1 280px;
-    font: inherit;
-    padding: 4px 8px;
-    border: 1px solid var(--line);
-    border-radius: 6px;
-    background: var(--card);
-    color: var(--text);
+    flex: 1 1 320px;
+    max-width: 560px;
   }
-  .small {
-    font-size: 12px;
+  .survey {
+    font-size: 16px;
   }
-  .error {
-    color: var(--lose);
+  .folders {
+    display: grid;
+    grid-template-columns: max-content minmax(0, 1fr);
+    gap: 10px 22px;
+    margin: 0 0 12px;
+    font-size: 15px;
+  }
+  .folders dt {
+    color: var(--muted);
+  }
+  .folders dd {
+    margin: 0;
+    min-width: 0;
+  }
+  code {
+    font-family: 'Cascadia Mono', Consolas, monospace;
+    font-size: 14px;
+    font-weight: 400;
+    overflow-wrap: anywhere;
   }
 </style>

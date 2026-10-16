@@ -362,6 +362,14 @@ in 2.8 s.
 
 ## 9. UI (single window, on demand)
 
+One window, created when Downplayed is opened (1360×880, or nine tenths of a smaller
+screen; Ctrl + / Ctrl - zoom it) and destroyed when closed. A sidebar holds the mark, the
+pages (Matches, Storage) and the live status (tracker, recorder, League client); the page
+fills the rest. Type starts at 16 px, controls are 40 px tall, and icons are line
+drawings of Downplayed's own. The app icon (`tools/make-icons.py`, `icons/source.svg`) is a
+white "D" whose counter is a play button on a teal-to-blue tile; at 20 px and under, and
+in the tray, the tile carries the play button alone.
+
 1. **Matches:** cards with champion icon, queue, W/L, K/D/A, duration and date.
    Filters for champion, queue, result and has-multikill.
 2. **Match view:** HTML5 `<video>` streaming from disk via Tauri's asset protocol (never
