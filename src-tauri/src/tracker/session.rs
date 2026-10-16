@@ -54,7 +54,8 @@ impl ModeClass {
             "PRACTICETOOL" => Self::PracticeTool,
             "TFT" => Self::Tft,
             "CHERRY" => Self::Arena,
-            "ARAM" => Self::Aram,
+            // ARAM: Mayhem (queue 2400) reports `KIWI`.
+            "ARAM" | "KIWI" => Self::Aram,
             _ if is_custom => Self::Custom,
             _ => Self::Normal,
         }
@@ -609,6 +610,12 @@ mod tests {
         );
         assert_eq!(session.ingest(fixture.events().unwrap()).new_events, 0);
         assert!(!MatchFilters::default().allows(ModeClass::Tft));
+        assert_eq!(
+            ModeClass::classify("KIWI", false),
+            ModeClass::Aram,
+            "ARAM: Mayhem"
+        );
+        assert!(!no_aram.allows(ModeClass::classify("kiwi", false)));
     }
 
     #[test]

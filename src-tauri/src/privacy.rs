@@ -15,7 +15,7 @@ use std::fmt;
 use std::hash::BuildHasher;
 use std::sync::{LazyLock, RwLock};
 
-use regex::Regex;
+use regex::{Captures, Regex};
 
 static SALT: LazyLock<RandomState> = LazyLock::new(RandomState::new);
 
@@ -67,7 +67,7 @@ static PATTERNS: LazyLock<Vec<(Regex, &'static str)>> = LazyLock::new(|| {
         // Riot ID `GameName#TAG`.
         (r"[\p{L}\p{N}_.]{3,16}#[\p{L}\p{N}]{3,5}\b", "<riot-id>"),
         // puuids (78 chars), encrypted summoner/account IDs and other long opaque tokens.
-        (r"\b[0-9A-Za-z_-]{40,}\b", "<id>"),
+        (LONG_TOKEN, "<id>"),
     ];
     rules
         .into_iter()
@@ -78,6 +78,14 @@ static PATTERNS: LazyLock<Vec<(Regex, &'static str)>> = LazyLock::new(|| {
             )
         })
         .collect()
+});
+
+const LONG_TOKEN: &str = r"\b[0-9A-Za-z_-]{40,}\b";
+
+/// Match folder names (`2026-10-15_23-30-00_Ranked-Solo-Duo_Shyvana`) are long enough to
+/// look like tokens but only hold a date, the queue and the champion.
+static MATCH_FOLDER: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}(?:[_-]|$)").expect("valid regex")
 });
 
 /// The most names kept for scrubbing; the oldest are forgotten first.
@@ -135,9 +143,21 @@ pub fn scrub(line: &str) -> Cow<'_, str> {
         }
     }
     for (regex, replacement) in PATTERNS.iter() {
-        if regex.is_match(&out) {
-            out = Cow::Owned(regex.replace_all(&out, *replacement).into_owned());
+        if !regex.is_match(&out) {
+            continue;
         }
+        let replaced = if regex.as_str() == LONG_TOKEN {
+            regex.replace_all(&out, |token: &Captures| {
+                if MATCH_FOLDER.is_match(&token[0]) {
+                    token[0].to_owned()
+                } else {
+                    (*replacement).to_owned()
+                }
+            })
+        } else {
+            regex.replace_all(&out, *replacement)
+        };
+        out = Cow::Owned(replaced.into_owned());
     }
     out
 }
@@ -187,6 +207,18 @@ mod tests {
         register_names(["Registered Player", "Registered Player#TAG1"]);
         let out = scrub("killed by registered player at 12:00");
         assert_eq!(out, "killed by <player> at 12:00");
+    }
+
+    #[test]
+    fn match_folder_names_are_not_tokens() {
+        let id = "2026-10-15_23-30-00_Ranked-Solo-Duo_Shyvana";
+        let line = format!("match saved id={id}");
+        assert_eq!(scrub(&line), line);
+        let path = format!(r"folder=C:\Users\x\library\League of Legends\{id}\match.mp4");
+        assert_eq!(scrub(&path), path);
+        // A token that only starts like a date is still masked.
+        let token = format!("2026-10-15{}", "a".repeat(68));
+        assert_eq!(scrub(&format!("puuid {token}")), "puuid <id>");
     }
 
     #[test]
