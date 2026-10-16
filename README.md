@@ -181,7 +181,8 @@ fixtures/lol/                synthetic Live Client / LCU fixtures and expected r
 ui/                          Vite + Svelte window: status, matches, review with video
 tools/fetch-ffmpeg.ps1       pinned LGPL ffmpeg build (URL + SHA-256)
 tools/install-local.ps1      release build installed for this user, Start menu shortcut
-tools/make-icons.py          draws the icon set in src-tauri/icons (Pillow)
+tools/make-icons.py          draws the icon set in src-tauri/icons and the window logo's
+                             paths (ui/src/lib/mark.js) (Pillow)
 ```
 
 ## License
