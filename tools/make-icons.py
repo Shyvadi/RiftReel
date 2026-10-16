@@ -1,15 +1,8 @@
 """Draws RiftReel's icon set into src-tauri/icons (original artwork).
 
-The mark: a white dragon coiled into a reel around the letter R, biting the tip of its
-own tail, on a rounded tile that runs from teal to blue. The same mark is used at every
-size, the tray icon (tray.png) included.
-
-It is constructed, not drawn by hand. The body lies between two circles about one
-centre. The tail tapers to its tip between two more circles, each tangent to one of
-those, so the taper flows out of the body. The head is the body bulged out to a slightly
-larger circle, cut square at the nose and chin around a narrow mouth. The horn is a
-crescent of two arcs and the eye is a lens of two arcs. The R is a stem, a bowl between
-two concentric half circles, and a leg. Every other edge is straight.
+The mark: a bold white R on a rounded tile that runs from teal to blue, the same at
+every size, the tray icon (tray.png) included. It is constructed, not drawn by hand: a
+stem, a bowl between two concentric half circles, and a straight leg.
 
 The mark is built here as SVG paths (one per shape, each filled even-odd), which this
 script also writes to src-tauri/icons/source.svg and to ui/src/lib/mark.js for the
@@ -34,22 +27,12 @@ SUPER = 4
 TEAL = (20, 184, 166)
 BLUE = (37, 99, 235)
 
-# On the 1024 grid; angles in degrees, clockwise from 3 o'clock. The body runs clockwise
-# from the tail's tip (TIP) round to the head, and is whole from TIP + 180 on.
-CENTRE = (530, 548)
-OUTER, INNER = 300, 180
-MIDDLE = (OUTER + INNER) / 2
-TIP, NECK = 293, 244
-# The head: how far it bulges past the body, where the nose and chin are cut, the corner
-# of the mouth, and how far each lip stands from the middle of the body.
-BULGE, NOSE, CHIN, MOUTH, LIP = 22, 303, 299, 286, 14
-# The horn: base from and to (angles), the tip's angle and height above the head, and
-# the radii of its front and back arcs.
-HORN = (256, 276, 232, 132, 230, 180)
-# The eye: its angle and radius, length, height and tilt.
-EYE = (284, 262, 48, 15, 3)
-# The R in the middle: height, width, stroke, the bowl's height, and the leg's width.
-R_HEIGHT, R_WIDTH, R_STROKE, R_BOWL, R_LEG = 236, 176, 46, 140, 58
+# The R, centred on the 1024 grid: its height, width and stroke, the bowl's height, the
+# leg's width, how far the leg reaches past the bowl, and the gap between the stem and
+# the top of the leg.
+CENTRE = (512, 512)
+R_HEIGHT, R_WIDTH, R_STROKE, R_BOWL = 500, 380, 104, 290
+R_LEG, R_REACH, R_NOTCH = 136, 36, 38
 
 
 def num(value):
@@ -84,108 +67,25 @@ def polygon(points):
     return "M" + " L".join(xy(p) for p in points) + " Z"
 
 
-def arc_between(p0, p1, radius, away_from):
-    """The shorter arc of the given radius from p0 to p1, bulging away from `away_from`."""
-    half = math.dist(p0, p1) / 2
-    middle = ((p0[0] + p1[0]) / 2, (p0[1] + p1[1]) / 2)
-    normal = (-(p1[1] - p0[1]) / (2 * half), (p1[0] - p0[0]) / (2 * half))
-    reach = math.sqrt(max(radius * radius - half * half, 0))
-    best = None
-    for side in (1, -1):
-        centre = (middle[0] + side * reach * normal[0], middle[1] + side * reach * normal[1])
-        start = math.degrees(math.atan2(p0[1] - centre[1], p0[0] - centre[0]))
-        end = math.degrees(math.atan2(p1[1] - centre[1], p1[0] - centre[0]))
-        sweep = (end - start + 180) % 360 - 180
-        bulge = math.dist(polar(centre, radius, start + sweep / 2), away_from)
-        if best is None or bulge > best[0]:
-            best = (bulge, centre, start, start + sweep)
-    _, centre, start, end = best
-    return arc(centre, radius, start, end)
-
-
-def body():
-    """The whole part of the body, from where the tail's taper ends round to the neck."""
-    start, end = TIP + 180 - 3, NECK + 360
-    return (
-        f"M{xy(polar(CENTRE, OUTER, start))} {arc(CENTRE, OUTER, start, end)} "
-        f"L{xy(polar(CENTRE, INNER, end))} {arc(CENTRE, INNER, end, start)} Z"
-    )
-
-
-def tail():
-    """The tail, tapering to its tip between two circles: one through the tip and tangent
-    to the outer circle, one through the tip and tangent to the inner circle, both
-    where the taper ends."""
-    whole = TIP + 180
-    toward = polar((0, 0), 1, whole)
-    shift_out, shift_in = (OUTER - MIDDLE) / 2, (MIDDLE - INNER) / 2
-    outer = (CENTRE[0] + shift_out * toward[0], CENTRE[1] + shift_out * toward[1])
-    inner = (CENTRE[0] - shift_in * toward[0], CENTRE[1] - shift_in * toward[1])
-    outer_r, inner_r = (OUTER + MIDDLE) / 2, (MIDDLE + INNER) / 2
-    return (
-        f"M{xy(polar(outer, outer_r, TIP))} {arc(outer, outer_r, TIP, whole)} "
-        f"L{xy(polar(inner, inner_r, whole))} {arc(inner, inner_r, whole, TIP)} Z"
-    )
-
-
-def head():
-    """The head, with its eye cut out."""
-    rim = OUTER + BULGE
-    outline = (
-        f"M{xy(polar(CENTRE, rim, NECK - 3))} {arc(CENTRE, rim, NECK - 3, NOSE)} "
-        f"L{xy(polar(CENTRE, MIDDLE + LIP, NOSE))} L{xy(polar(CENTRE, MIDDLE, MOUTH))} "
-        f"L{xy(polar(CENTRE, MIDDLE - LIP, CHIN))} L{xy(polar(CENTRE, INNER, CHIN))} "
-        f"{arc(CENTRE, INNER, CHIN, NECK - 3)} Z"
-    )
-    at, radius, length, height, tilt = EYE
-    middle = polar(CENTRE, radius, at)
-    ends = [polar(middle, length / 2, at + 90 + tilt + side) for side in (180, 0)]
-    up, down = polar(middle, 1000, at + tilt), polar(middle, 1000, at + tilt + 180)
-    lens = (length * length / 4 + height * height / 4) / height
-    eye = (
-        f"M{xy(ends[0])} {arc_between(ends[0], ends[1], lens, down)} "
-        f"{arc_between(ends[1], ends[0], lens, up)} Z"
-    )
-    return outline + " " + eye
-
-
-def horn(start, end, tip_at, height, front, back):
-    """A crescent from the head's rim, swept back: two arcs bulging outward."""
-    rim = OUTER + BULGE - 8
-    base_back, base_front = polar(CENTRE, rim, start), polar(CENTRE, rim, end)
-    point = polar(CENTRE, OUTER + BULGE + height, tip_at)
-    return (
-        f"M{xy(base_front)} {arc_between(base_front, point, front, CENTRE)} "
-        f"{arc_between(point, base_back, back, CENTRE)} Z"
-    )
-
-
-def letter_r():
-    """The R, centred in the coil: its stem, its bowl (with the counter cut out) and its
-    leg, which reaches a little past the bowl."""
+def mark():
+    """The R's paths: its stem, its bowl (with the counter cut out) and its leg."""
     left, top = CENTRE[0] - R_WIDTH / 2, CENTRE[1] - R_HEIGHT / 2
     right, bottom = left + R_WIDTH, top + R_HEIGHT
     stem = left + R_STROKE
     radius = R_BOWL / 2
-    bowl = (right - 18 - radius, top + radius)
-    counter = radius - R_STROKE
+    bowl = (right - R_REACH - radius, top + radius)
     bowl_path = (
         f"M{xy((stem - 2, top))} L{xy((bowl[0], top))} {arc(bowl, radius, -90, 90)} "
         f"L{xy((stem - 2, top + R_BOWL))} Z "
         f"M{xy((stem, top + R_STROKE))} L{xy((bowl[0], top + R_STROKE))} "
-        f"{arc(bowl, counter, -90, 90)} L{xy((stem, top + R_BOWL - R_STROKE))} Z"
+        f"{arc(bowl, radius - R_STROKE, -90, 90)} L{xy((stem, top + R_BOWL - R_STROKE))} Z"
     )
-    leg_top, leg_left = top + R_BOWL - R_STROKE / 2, bowl[0] - R_LEG / 2 - 6
+    leg_top, leg_left = top + R_BOWL - R_STROKE / 2, stem + R_NOTCH
     return [
         polygon([(left, top), (stem, top), (stem, bottom), (left, bottom)]),
         bowl_path,
         polygon([(leg_left, leg_top), (leg_left + R_LEG, leg_top), (right, bottom), (right - R_LEG, bottom)]),
     ]
-
-
-def mark():
-    """The mark's paths, one per shape."""
-    return [body(), tail(), head(), horn(*HORN)] + letter_r()
 
 
 def subpaths(path, scale):
