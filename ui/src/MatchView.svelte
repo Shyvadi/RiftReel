@@ -16,6 +16,13 @@
   /** Where to start once the player has loaded the file `show` put in it. */
   let pendingStart = null;
   let clipError = $state('');
+  /** The part of the recording to save as a clip (recording seconds), once marked. */
+  let markIn = $state(null);
+  let markOut = $state(null);
+  /** What is being cut while ffmpeg works: a moment's index, or 'range'. */
+  let saving = $state(null);
+  /** Why the last cut failed, and which it was. */
+  let saveError = $state(null);
 
   $effect(() => {
     const wanted = id;
@@ -26,6 +33,10 @@
     clip = null;
     pendingStart = null;
     clipError = '';
+    markIn = null;
+    markOut = null;
+    saving = null;
+    saveError = null;
     invoke('get_match', { id: wanted })
       .then((value) => {
         if (wanted === id) match = value;
@@ -50,7 +61,7 @@
   /** The clip that has recording time `seconds` (clips are cut from the recording, so
    *  they share its timeline from their start). */
   const clipAt = (seconds) => clips.find((c) => c.path && c.fromS <= seconds && seconds < c.toS) ?? null;
-  /** Without the whole match (highlights mode), the player starts on the first clip. */
+  /** Without the whole match (its recording deleted), the player starts on the first clip. */
   const shown = $derived(clip ?? (videoSrc ? null : (clips.find((c) => c.path) ?? null)));
   const playerSrc = $derived(shown ? convertFileSrc(shown.path) : videoSrc);
   const shownIndex = $derived(shown ? clips.findIndex((c) => c.file === shown.file) : -1);
@@ -67,21 +78,42 @@
   const gameClock = (seconds) => clock(offset != null ? seconds + offset : seconds);
   /** Whether the player can show recording time `seconds`. */
   const playable = (seconds) => seconds != null && (videoSrc != null || clipAt(Math.max(0, seconds)) != null);
+  /** The marked part, in order, if it's long enough for a clip. */
+  const range = $derived.by(() => {
+    if (markIn == null || markOut == null) return null;
+    const [from, to] = markIn <= markOut ? [markIn, markOut] : [markOut, markIn];
+    return to - from >= 1 ? { from, to } : null;
+  });
 
   /** Where a marker's clip starts in the video: its pre-roll before the event. */
   const markerStart = (marker) => (marker.videoTimeS == null ? null : marker.videoTimeS - marker.preS);
+  /** A moment's markers that are on the recording. */
+  const placed = (moment) =>
+    moment.markerIds.map((markerId) => markersById.get(markerId)).filter((m) => m?.videoTimeS != null);
   /** A moment starts with its earliest marker's pre-roll. */
   function momentStart(moment) {
-    const starts = moment.markerIds
-      .map((markerId) => markersById.get(markerId))
-      .filter(Boolean)
-      .map(markerStart)
-      .filter((start) => start != null);
+    const starts = placed(moment).map(markerStart);
     return starts.length ? Math.min(...starts) : null;
   }
+  /** …and ends with its latest marker's post-roll. */
+  function momentEnd(moment) {
+    const ends = placed(moment).map((m) => m.videoTimeS + m.postS);
+    return ends.length ? Math.max(...ends) : null;
+  }
+  /** The frame its clip's thumbnail shows: the event the moment is named after. */
+  function momentMain(moment) {
+    const members = placed(moment);
+    return (members.find((m) => m.label === moment.label) ?? members[0])?.videoTimeS ?? null;
+  }
+  /** The clip saved for a span, if there is one (it starts on the keyframe before). */
+  const savedFor = (from, to) =>
+    from == null || to == null
+      ? null
+      : (clips.find((c) => c.fromS <= from + 0.01 && c.fromS > from - 1.01 && Math.abs(c.toS - to) < 0.5) ??
+        null);
 
   /** Plays from recording time `seconds`: in the whole match, or in the clip that has
-   *  that time when only clips were kept. */
+   *  that time when only the clips are left. */
   function seek(seconds) {
     if (seconds == null) return;
     const at = Math.max(0, seconds);
@@ -115,6 +147,33 @@
     video.currentTime = pendingStart;
     pendingStart = null;
     video.play().catch(() => {});
+  }
+
+  /** Cuts recording seconds `from`–`to` into a clip (a stream copy, a second or two). */
+  async function saveClip(key, from, to, label, thumbnailS) {
+    if (saving != null || from == null || to == null) return;
+    saving = key;
+    saveError = null;
+    try {
+      const saved = await invoke('save_clip', { id, fromS: from, toS: to, label, thumbnailS });
+      if (match.clips) match.clips.push(saved);
+      else match.clips = [saved];
+    } catch (e) {
+      saveError = { key, text: String(e) };
+    } finally {
+      saving = null;
+    }
+  }
+
+  const saveMoment = (moment, i) =>
+    saveClip(i, momentStart(moment), momentEnd(moment), moment.label, momentMain(moment));
+
+  /** Marks the player's position as one end of the clip to save. */
+  function mark(end) {
+    if (!video) return;
+    const at = (shown?.fromS ?? 0) + video.currentTime;
+    if (end === 'in') markIn = at;
+    else markOut = at;
   }
 
   async function toggleFavorite(c) {
@@ -221,6 +280,27 @@
         onerror={() => (videoError = shown ? 'This clip could not be played.' : 'This video could not be played.')}
       ></video>
       {#if videoError}<p class="error">{videoError}</p>{/if}
+      {#if videoSrc}
+        <div class="trim" role="group" aria-label="Make a clip">
+          <button type="button" class="back" onclick={() => mark('in')}>Mark in</button>
+          <span class="num">{markIn == null ? '–' : gameClock(markIn)}</span>
+          <button type="button" class="back" onclick={() => mark('out')}>Mark out</button>
+          <span class="num">{markOut == null ? '–' : gameClock(markOut)}</span>
+          {#if range}<span class="muted num">{(range.to - range.from).toFixed(1)} s</span>{/if}
+          <button
+            type="button"
+            class="save"
+            disabled={!range || saving != null}
+            onclick={() => saveClip('range', range.from, range.to, 'clip', null)}
+          >
+            {saving === 'range' ? 'Saving…' : 'Save clip'}
+          </button>
+          {#if markIn != null || markOut != null}
+            <button type="button" class="link" onclick={() => ((markIn = null), (markOut = null))}>clear</button>
+          {/if}
+        </div>
+        {#if saveError?.key === 'range'}<p class="error small">{saveError.text}</p>{/if}
+      {/if}
       {#if recording}
         <div class="muted small">
           {recording.width}×{recording.height} · {recording.fps} fps · {recording.encoder}
@@ -345,6 +425,18 @@
           </circle>
         {/if}
       {/each}
+      {#if range && offset != null}
+        <rect
+          class="marked"
+          x={x(range.from + offset)}
+          y="6"
+          width={Math.max(2, x(range.to + offset) - x(range.from + offset))}
+          height="38"
+          rx="4"
+        >
+          <title>marked for a clip: {gameClock(range.from)}–{gameClock(range.to)}</title>
+        </rect>
+      {/if}
       {#if playhead != null}
         <line class="playhead" x1={x(playhead)} x2={x(playhead)} y1="2" y2="66" />
       {/if}
@@ -356,7 +448,7 @@
       <span class="death"><i></i>deaths</span>
       <span class="win"><i></i>victory</span>
       {#if videoSrc}
-        <span>click a moment, a marker or anywhere on the timeline to watch it</span>
+        <span>click a moment, a marker or anywhere on the timeline to watch it; ✂ saves a moment as a clip</span>
       {:else if playerSrc}
         <span>click a moment or a marker to watch its clip</span>
       {/if}
@@ -365,22 +457,48 @@
 
   <section class="card">
     <h3>Moments</h3>
+    {#if typeof saveError?.key === 'number'}<p class="error small">{saveError.text}</p>{/if}
     {#if match.moments.length}
       <table>
         <thead>
           <tr>
             {#if playerSrc}<th class="act"><span class="sr">play</span></th>{/if}
+            {#if videoSrc}<th class="act"><span class="sr">clip</span></th>{/if}
             <th class="num">#</th><th>highlight</th><th class="num">from</th><th class="num">to</th><th class="num">length</th><th class="num">markers</th>
           </tr>
         </thead>
         <tbody>
           {#each match.moments as moment, i (i)}
             {@const start = momentStart(moment)}
+            {@const end = momentEnd(moment)}
+            {@const saved = savedFor(start, end)}
             <tr>
               {#if playerSrc}
                 <td class="act">
                   {#if playable(start)}
                     <button type="button" class="play" aria-label="Play moment {i + 1}" onclick={() => seek(start)}>▶</button>
+                  {/if}
+                </td>
+              {/if}
+              {#if videoSrc}
+                <td class="act">
+                  {#if saved}
+                    <button
+                      type="button"
+                      class="play"
+                      title="Saved as a clip: play it"
+                      aria-label="Play the clip of moment {i + 1}"
+                      onclick={() => show(saved)}>✓</button
+                    >
+                  {:else if start != null && end != null}
+                    <button
+                      type="button"
+                      class="play"
+                      title="Save as a clip"
+                      aria-label="Save moment {i + 1} as a clip"
+                      disabled={saving != null}
+                      onclick={() => saveMoment(moment, i)}>{saving === i ? '…' : '✂'}</button
+                    >
                   {/if}
                 </td>
               {/if}
@@ -442,7 +560,7 @@
       {#if match.source === 'recording'}
         Fixture recordings have no video.
       {:else if clips.length}
-        Only this match's clips were kept, not the whole game.
+        This match's recording is gone; the clips saved from it are kept.
       {:else if match.recording}
         This match was recorded, but its video file is no longer in the match folder.
       {:else}
@@ -518,6 +636,44 @@
     background: #000;
     border-radius: 6px;
     margin-bottom: 6px;
+  }
+  .trim {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 10px;
+    margin: 4px 0 8px;
+    font-size: 13px;
+  }
+  .trim .num {
+    min-width: 3.2em;
+  }
+  .save {
+    border: 0;
+    border-radius: 999px;
+    padding: 5px 14px;
+    background: var(--accent);
+    color: var(--on-strong);
+    font: inherit;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .save:disabled {
+    opacity: 0.45;
+    cursor: default;
+  }
+  .link {
+    border: 0;
+    background: none;
+    padding: 0;
+    color: var(--muted);
+    font: inherit;
+    text-decoration: underline;
+    cursor: pointer;
+  }
+  .play:disabled {
+    opacity: 0.45;
+    cursor: default;
   }
   .playing {
     display: flex;
@@ -651,6 +807,13 @@
     stroke-width: 2;
     pointer-events: none;
   }
+  rect.marked {
+    fill: var(--accent);
+    opacity: 0.25;
+    stroke: var(--accent);
+    stroke-width: 1.5;
+    pointer-events: none;
+  }
   circle {
     stroke: var(--card);
     stroke-width: 1.5;
@@ -675,9 +838,9 @@
     fill: var(--win);
     color: var(--win);
   }
-  .replay {
-    fill: var(--muted);
-    color: var(--muted);
+  .custom {
+    fill: var(--accent);
+    color: var(--accent);
   }
   .legend {
     display: flex;

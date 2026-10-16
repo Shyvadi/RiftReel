@@ -12,7 +12,6 @@ use super::machine::EndReason;
 use super::moments::{build_moments, Moment, DEFAULT_MAX_MOMENT_S};
 use super::normalize::{GameResult, Kda, Marker, MarkerChange, MarkerConfig, Normalizer};
 use super::roster::{PlayerIdentity, Roster, Team};
-use crate::capture::clips::Clip;
 use crate::capture::{Recording, RecordingInfo};
 use crate::league::live::EventCursor;
 use crate::league::models::{
@@ -164,9 +163,6 @@ pub struct MatchSummary {
     pub recording: Option<RecordingInfo>,
     pub markers: Vec<Marker>,
     pub moments: Vec<Moment>,
-    /// Highlight clips cut from the recording (doc 03 §7).
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub clips: Vec<Clip>,
 }
 
 #[derive(Debug)]
@@ -539,7 +535,6 @@ impl MatchSession {
             recording,
             markers,
             moments,
-            clips: Vec::new(),
         }
     }
 }

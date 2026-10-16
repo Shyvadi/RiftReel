@@ -1,24 +1,26 @@
-//! Highlight clips (doc 03 §6–7): each moment cut from the match video with a stream copy
-//! into `clips/NNNN_<label>.mp4`, with a JPEG thumbnail in `thumbs/NNNN.jpg`.
+//! Clips (doc 03 §7, §9), made in the review after the game: a span of the recorded match
+//! cut out of `match.mp4` with a stream copy into `clips/NNNN_<label>.mp4`, with a JPEG
+//! thumbnail in `thumbs/NNNN.jpg`. Nothing is cut during the game, and nothing until the
+//! user asks: a highlight plays straight from the recording.
 //!
 //! A stream copy can only start on a keyframe. Recordings have one every second, so a
-//! clip begins up to a second before its moment's pre-roll and nothing is re-encoded:
-//! cutting a match's clips reads only their own bytes.
+//! clip begins up to a second before the span asked for, and nothing is re-encoded:
+//! cutting reads only the clip's own bytes.
 
 use std::ffi::OsString;
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use crate::tracker::moments::Moment;
-use crate::tracker::normalize::Marker;
-
 pub const CLIPS_DIR: &str = "clips";
 pub const THUMBS_DIR: &str = "thumbs";
-/// The label of a clip saved with the Save replay hotkey.
-pub const REPLAY_LABEL: &str = "replay";
+/// Seconds between keyframes in a recording (`-g` is the frame rate).
+pub const KEYFRAME_S: f64 = 1.0;
+/// The label of a clip that isn't a highlight's.
+pub const DEFAULT_LABEL: &str = "clip";
 /// Shorter spans aren't worth a file.
 const MIN_CLIP_S: f64 = 1.0;
+const MAX_LABEL_LEN: usize = 40;
 /// Thumbnails are this wide (height follows the video's shape).
 const THUMBNAIL_WIDTH: u32 = 480;
 
@@ -32,7 +34,7 @@ pub struct Clip {
     /// `from_s`.
     pub from_s: f64,
     pub to_s: f64,
-    /// The moment's label, or `replay` for a Save replay.
+    /// The highlight's label (`double_kill`), or `clip`.
     pub label: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub thumbnail: Option<String>,
@@ -45,7 +47,7 @@ pub struct Clip {
 pub struct ClipPlan {
     pub from_s: f64,
     pub to_s: f64,
-    /// The frame the thumbnail shows (the moment's main event).
+    /// The frame the thumbnail shows (a highlight's main event).
     pub thumbnail_at_s: f64,
     pub label: String,
     /// Inside the match folder.
@@ -75,6 +77,26 @@ pub fn clip_paths(index: usize, label: &str) -> (String, String) {
     )
 }
 
+/// A label fit for a file name: lowercase letters, digits and `_`; `clip` if nothing is
+/// left.
+pub fn clip_label(label: &str) -> String {
+    let mut slug = String::new();
+    for c in label.trim().chars() {
+        if c.is_ascii_alphanumeric() {
+            slug.push(c.to_ascii_lowercase());
+        } else if !slug.ends_with('_') {
+            slug.push('_');
+        }
+    }
+    let slug: String = slug.trim_matches('_').chars().take(MAX_LABEL_LEN).collect();
+    let slug = slug.trim_end_matches('_');
+    if slug.is_empty() {
+        DEFAULT_LABEL.to_owned()
+    } else {
+        slug.to_owned()
+    }
+}
+
 /// The keyframe a stream copy starting at `s` really starts on.
 pub fn keyframe_at_or_before(s: f64, keyframe_s: f64) -> f64 {
     if keyframe_s <= 0.0 {
@@ -83,8 +105,9 @@ pub fn keyframe_at_or_before(s: f64, keyframe_s: f64) -> f64 {
     ((s.max(0.0) / keyframe_s) + 1e-9).floor() * keyframe_s
 }
 
-/// A span of the video as a clip numbered `index`: clamped to the video, its start moved
-/// back to a keyframe, the thumbnail at `main_s`. `None` if too little of it was recorded.
+/// A span of the video as clip number `index`: clamped to the `video_s` recorded, its
+/// start moved back to a keyframe, the thumbnail at `main_s`. `None` if too little of it
+/// was recorded.
 pub fn plan_span(
     index: usize,
     label: &str,
@@ -93,11 +116,19 @@ pub fn plan_span(
     video_s: f64,
     keyframe_s: f64,
 ) -> Option<ClipPlan> {
+    if !(span.0.is_finite() && span.1.is_finite()) {
+        return None;
+    }
     let to_s = span.1.min(video_s);
     let from_s = keyframe_at_or_before(span.0, keyframe_s);
     if to_s - from_s < MIN_CLIP_S || to_s <= 0.0 {
         return None;
     }
+    let main_s = if main_s.is_finite() {
+        main_s
+    } else {
+        (from_s + to_s) / 2.0
+    };
     let (file, thumbnail) = clip_paths(index, label);
     Some(ClipPlan {
         from_s,
@@ -107,57 +138,6 @@ pub fn plan_span(
         file,
         thumbnail,
     })
-}
-
-/// The clips for a match's moments, in video time: from each moment's earliest pre-roll
-/// to its latest post-roll (its markers' video times), within the `video_s` recorded.
-/// Moments the video doesn't cover, or with markers that couldn't be placed on it, are
-/// left out.
-pub fn plan_clips(
-    moments: &[Moment],
-    markers: &[Marker],
-    video_s: f64,
-    keyframe_s: f64,
-) -> Vec<ClipPlan> {
-    let mut plans = Vec::new();
-    for moment in moments {
-        let members: Vec<&Marker> = moment
-            .marker_ids
-            .iter()
-            .filter_map(|id| markers.iter().find(|m| m.id == *id))
-            .collect();
-        let Some(times) = members
-            .iter()
-            .map(|m| {
-                m.video_time_s
-                    .map(|t| (t - m.pre_s, t + m.post_s, t, m.label))
-            })
-            .collect::<Option<Vec<_>>>()
-        else {
-            continue;
-        };
-        if times.is_empty() {
-            continue;
-        }
-        let from = times.iter().map(|t| t.0).fold(f64::INFINITY, f64::min);
-        let to = times.iter().map(|t| t.1).fold(f64::NEG_INFINITY, f64::max);
-        // The thumbnail shows the event the moment is named after.
-        let main = times
-            .iter()
-            .find(|t| t.3 == moment.label)
-            .map_or(times[0].2, |t| t.2);
-        if let Some(plan) = plan_span(
-            plans.len() + 1,
-            moment.label.as_str(),
-            (from, to),
-            main,
-            video_s,
-            keyframe_s,
-        ) {
-            plans.push(plan);
-        }
-    }
-    plans
 }
 
 fn args<const N: usize>(items: [&str; N]) -> Vec<OsString> {
@@ -206,31 +186,6 @@ pub fn thumbnail_args(video: &Path, at_s: f64, out: &Path) -> Vec<OsString> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tracker::normalize::{MarkerKind, MarkerLabel};
-
-    fn marker(id: u32, label: MarkerLabel, video: Option<f64>, pre: f64, post: f64) -> Marker {
-        Marker {
-            id,
-            kind: MarkerKind::Kill,
-            label,
-            game_time_s: video.unwrap_or(0.0) - 40.0,
-            video_time_s: video,
-            pre_s: pre,
-            post_s: post,
-            stolen: false,
-            by_team: false,
-            riot_event_ids: vec![u64::from(id)],
-        }
-    }
-
-    fn moment(label: MarkerLabel, ids: &[u32]) -> Moment {
-        Moment {
-            start_s: 0.0,
-            end_s: 0.0,
-            label,
-            marker_ids: ids.to_vec(),
-        }
-    }
 
     fn text(args: &[OsString]) -> Vec<String> {
         args.iter()
@@ -239,26 +194,14 @@ mod tests {
     }
 
     #[test]
-    fn a_moment_spans_its_markers_pre_and_post_roll_from_a_keyframe() {
-        let markers = [
-            marker(1, MarkerLabel::Kill, Some(100.4), 12.0, 8.0),
-            marker(2, MarkerLabel::DoubleKill, Some(104.0), 12.0, 8.0),
-        ];
-        let plans = plan_clips(
-            &[moment(MarkerLabel::DoubleKill, &[1, 2])],
-            &markers,
-            1800.0,
-            1.0,
-        );
-        assert_eq!(plans.len(), 1);
-        let plan = &plans[0];
-        // Earliest pre-roll 88.4 s: the copy starts on the keyframe at 88 s.
-        assert_eq!(plan.from_s, 88.0);
-        assert!((plan.to_s - 112.0).abs() < 1e-9, "latest post-roll");
+    fn a_span_starts_on_the_keyframe_before_it() {
+        // A double kill's window: 12 s before the first kill, 8 s after the second.
+        let plan = plan_span(1, "double_kill", (88.4, 112.0), 104.0, 1800.0, KEYFRAME_S).unwrap();
+        assert_eq!(plan.from_s, 88.0, "the copy starts on the keyframe at 88 s");
+        assert_eq!(plan.to_s, 112.0);
         assert_eq!(plan.thumbnail_at_s, 104.0, "the double kill itself");
         assert_eq!(plan.file, "clips/0001_double_kill.mp4");
         assert_eq!(plan.thumbnail, "thumbs/0001.jpg");
-        assert_eq!(plan.label, "double_kill");
         let clip = plan.clip(true);
         assert_eq!(
             (clip.from_s, clip.thumbnail.as_deref(), clip.favorite),
@@ -268,29 +211,25 @@ mod tests {
     }
 
     #[test]
-    fn clips_stay_within_the_recording() {
-        let markers = [
-            // Before the recording began (it started during the loading screen).
-            marker(1, MarkerLabel::Kill, Some(5.0), 12.0, 8.0),
-            // The victory, its post-roll past the end of the video.
-            marker(2, MarkerLabel::Victory, Some(1795.0), 10.0, 10.0),
-            // Never placed on the video (no clock sync).
-            marker(3, MarkerLabel::Assist, None, 12.0, 8.0),
-            // Entirely after the video ended.
-            marker(4, MarkerLabel::Kill, Some(1900.0), 12.0, 8.0),
-        ];
-        let moments = [
-            moment(MarkerLabel::Kill, &[1]),
-            moment(MarkerLabel::Victory, &[2]),
-            moment(MarkerLabel::Assist, &[3]),
-            moment(MarkerLabel::Kill, &[4]),
-        ];
-        let plans = plan_clips(&moments, &markers, 1800.0, 1.0);
-        assert_eq!(plans.len(), 2, "{plans:?}");
-        assert_eq!((plans[0].from_s, plans[0].to_s), (0.0, 13.0));
-        assert_eq!(plans[1].file, "clips/0002_victory.mp4", "numbered as cut");
-        assert_eq!((plans[1].from_s, plans[1].to_s), (1785.0, 1800.0));
-        assert!(plans[1].thumbnail_at_s < 1800.0);
+    fn spans_stay_within_the_recording() {
+        // Before the recording began (it started during the loading screen).
+        let early = plan_span(1, "kill", (-7.0, 13.0), 5.0, 1800.0, KEYFRAME_S).unwrap();
+        assert_eq!((early.from_s, early.to_s), (0.0, 13.0));
+        // The victory, its post-roll past the end of the video.
+        let late = plan_span(2, "victory", (1785.0, 1806.0), 1795.0, 1800.0, KEYFRAME_S).unwrap();
+        assert_eq!((late.from_s, late.to_s), (1785.0, 1800.0));
+        assert!(late.thumbnail_at_s < 1800.0);
+        // Entirely after the video ended, or too short to keep.
+        assert!(plan_span(3, "kill", (1888.0, 1908.0), 1900.0, 1800.0, KEYFRAME_S).is_none());
+        assert!(plan_span(4, "clip", (10.0, 10.5), 10.2, 60.0, KEYFRAME_S).is_none());
+        // Nonsense from the window is refused, not clamped into a clip.
+        assert!(plan_span(5, "clip", (f64::NAN, 10.5), 10.2, 60.0, KEYFRAME_S).is_none());
+        assert!(plan_span(5, "clip", (2.0, f64::INFINITY), 10.2, 60.0, KEYFRAME_S).is_none());
+        let odd = plan_span(5, "clip", (2.0, 10.0), f64::NAN, 60.0, KEYFRAME_S).unwrap();
+        assert_eq!(
+            odd.thumbnail_at_s, 6.0,
+            "the middle, when the frame asked for is nonsense"
+        );
     }
 
     #[test]
@@ -299,13 +238,16 @@ mod tests {
         assert_eq!(keyframe_at_or_before(88.0, 1.0), 88.0);
         assert_eq!(keyframe_at_or_before(-3.0, 1.0), 0.0);
         assert_eq!(keyframe_at_or_before(5.0, 2.0), 4.0);
-        assert!(
-            plan_span(1, "replay", (10.0, 10.5), 10.2, 60.0, 1.0).is_none(),
-            "too short"
-        );
-        let replay = plan_span(7, REPLAY_LABEL, (40.3, 60.3), 60.3, 60.0, 1.0).unwrap();
-        assert_eq!((replay.from_s, replay.to_s), (40.0, 60.0));
-        assert_eq!(replay.file, "clips/0007_replay.mp4");
+    }
+
+    #[test]
+    fn labels_are_made_safe_for_file_names() {
+        assert_eq!(clip_label("double_kill"), "double_kill");
+        assert_eq!(clip_label("  Baron steal!! "), "baron_steal");
+        assert_eq!(clip_label("../../evil"), "evil");
+        assert_eq!(clip_label(""), "clip");
+        assert_eq!(clip_label("***"), "clip");
+        assert_eq!(clip_label(&"a".repeat(80)).len(), 40);
     }
 
     #[test]

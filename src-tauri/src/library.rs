@@ -6,16 +6,18 @@
 //!
 //! A recorded match's folder is created when recording starts, named from what is known
 //! then (`<date>_<time>[_<queue>]`), and renamed to the full name when the match is
-//! saved.
+//! saved. Clips are added to it later, from the review (`plan_clip`, `add_clip`).
 
 use std::io;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
-use serde_json::Value;
+use serde_json::{Map, Value};
 
-use crate::capture::clips::{CLIPS_DIR, THUMBS_DIR};
+use crate::capture::clips::{
+    clip_label, plan_span, Clip, ClipPlan, CLIPS_DIR, KEYFRAME_S, THUMBS_DIR,
+};
 use crate::recorder::utc_parts;
 use crate::replay::{replay_with, Fixture, LcuRecording};
 use crate::tracker::session::{MatchSummary, SessionConfig};
@@ -67,6 +69,14 @@ struct MatchFile<'a> {
     summary: &'a MatchSummary,
 }
 
+/// A clip to cut out of a saved match: from its video, into its folder.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ClipJob {
+    pub video: PathBuf,
+    pub folder: PathBuf,
+    pub plan: ClipPlan,
+}
+
 #[derive(Debug, Clone)]
 pub struct Library {
     matches_dir: PathBuf,
@@ -112,11 +122,7 @@ impl Library {
             id: &id,
             summary,
         };
-        let text = serde_json::to_string_pretty(&file).map_err(io::Error::other)?;
-        let path = dir.join(MATCH_FILE);
-        let temp = path.with_extension("json.tmp");
-        std::fs::write(&temp, text + "\n")?;
-        std::fs::rename(&temp, &path)?;
+        write_json(&dir.join(MATCH_FILE), &file)?;
         Ok(id)
     }
 
@@ -182,20 +188,80 @@ impl Library {
         if let Some(video) = video {
             object.insert("videoPath".into(), video.display().to_string().into());
         }
-        // Clips and thumbnails that are there, with their full paths for the player.
         if let Some(clips) = object.get_mut("clips").and_then(Value::as_array_mut) {
             for clip in clips.iter_mut().filter_map(Value::as_object_mut) {
-                let file = clip.get("file").and_then(Value::as_str);
-                if let Some(path) = file.and_then(|f| member_file(&dir, CLIPS_DIR, f)) {
-                    clip.insert("path".into(), path.display().to_string().into());
-                }
-                let thumbnail = clip.get("thumbnail").and_then(Value::as_str);
-                if let Some(path) = thumbnail.and_then(|f| member_file(&dir, THUMBS_DIR, f)) {
-                    clip.insert("thumbnailPath".into(), path.display().to_string().into());
-                }
+                add_paths(&dir, clip);
             }
         }
         Some(summary)
+    }
+
+    /// Plans a clip of `span` (video seconds) of a saved match: numbered after every clip
+    /// it has, named after `label`, its thumbnail at `thumbnail_s` (the middle of the span
+    /// by default).
+    pub fn plan_clip(
+        &self,
+        id: &str,
+        span: (f64, f64),
+        label: &str,
+        thumbnail_s: Option<f64>,
+    ) -> io::Result<ClipJob> {
+        let not_found = |what: &str| io::Error::new(io::ErrorKind::NotFound, what.to_owned());
+        let dir = self
+            .matches_dir
+            .join(safe_name(id).ok_or_else(|| not_found("match not found"))?);
+        let summary =
+            read_json(&dir.join(MATCH_FILE)).ok_or_else(|| not_found("match not found"))?;
+        let video =
+            video_path(&dir, &summary).ok_or_else(|| not_found("this match has no video"))?;
+        let recording = &summary["recording"];
+        let video_s = match (recording["frames"].as_f64(), recording["fps"].as_f64()) {
+            (Some(frames), Some(fps)) if fps > 0.0 => frames / fps,
+            _ => f64::INFINITY,
+        };
+        let thumbnail = thumbnail_s.unwrap_or((span.0 + span.1) / 2.0);
+        let plan = plan_span(
+            next_clip_number(&dir, &summary),
+            &clip_label(label),
+            span,
+            thumbnail,
+            video_s,
+            KEYFRAME_S,
+        )
+        .ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "that part isn't in the recording, or is under a second",
+            )
+        })?;
+        Ok(ClipJob {
+            video,
+            folder: dir,
+            plan,
+        })
+    }
+
+    /// Lists a new clip in its match's `match.json`. Returns it as [`get`](Self::get)
+    /// shows clips, with its file paths.
+    pub fn add_clip(&self, id: &str, clip: &Clip) -> io::Result<Value> {
+        let not_found = || io::Error::new(io::ErrorKind::NotFound, "match not found");
+        let dir = self.matches_dir.join(safe_name(id).ok_or_else(not_found)?);
+        let path = dir.join(MATCH_FILE);
+        let mut summary = read_json(&path).ok_or_else(not_found)?;
+        let entry = serde_json::to_value(clip).map_err(io::Error::other)?;
+        let object = summary.as_object_mut().ok_or_else(not_found)?;
+        match object.get_mut("clips").and_then(Value::as_array_mut) {
+            Some(clips) => clips.push(entry.clone()),
+            None => {
+                object.insert("clips".into(), Value::Array(vec![entry.clone()]));
+            }
+        }
+        write_json(&path, &summary)?;
+        let mut shown = entry;
+        if let Some(fields) = shown.as_object_mut() {
+            add_paths(&dir, fields);
+        }
+        Ok(shown)
     }
 
     /// A saved match's clip file, if the match lists it and it exists (for "show in
@@ -225,10 +291,7 @@ impl Library {
             return Ok(false);
         };
         clip["favorite"] = favorite.into();
-        let text = serde_json::to_string_pretty(&summary).map_err(io::Error::other)?;
-        let temp = path.with_extension("json.tmp");
-        std::fs::write(&temp, text + "\n")?;
-        std::fs::rename(&temp, &path)?;
+        write_json(&path, &summary)?;
         Ok(true)
     }
 
@@ -264,6 +327,45 @@ fn card(id: String, source: Source, when_ms: u64, summary: &Value) -> MatchCard 
 fn member_file(dir: &Path, folder: &str, relative: &str) -> Option<PathBuf> {
     let name = safe_name(relative.strip_prefix(folder)?.strip_prefix('/')?)?;
     Some(dir.join(folder).join(name)).filter(|path| path.is_file())
+}
+
+/// A clip's file and thumbnail, where they are there, as full paths for the player.
+fn add_paths(dir: &Path, clip: &mut Map<String, Value>) {
+    let file = clip.get("file").and_then(Value::as_str);
+    if let Some(path) = file.and_then(|f| member_file(dir, CLIPS_DIR, f)) {
+        clip.insert("path".into(), path.display().to_string().into());
+    }
+    let thumbnail = clip.get("thumbnail").and_then(Value::as_str);
+    if let Some(path) = thumbnail.and_then(|f| member_file(dir, THUMBS_DIR, f)) {
+        clip.insert("thumbnailPath".into(), path.display().to_string().into());
+    }
+}
+
+/// The number after every clip a match lists, and every clip or thumbnail file in its
+/// folder (a new clip never meets an old file).
+fn next_clip_number(dir: &Path, summary: &Value) -> usize {
+    let number = |name: &str| name.get(..4).and_then(|n| n.parse::<usize>().ok());
+    let listed = summary["clips"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|clip| clip["file"].as_str())
+        .filter_map(|file| file.strip_prefix(CLIPS_DIR)?.strip_prefix('/'))
+        .filter_map(number)
+        .collect::<Vec<_>>();
+    let on_disk = [CLIPS_DIR, THUMBS_DIR]
+        .into_iter()
+        .flat_map(|folder| read_dir(&dir.join(folder)))
+        .filter_map(|path| path.file_name()?.to_str().and_then(number));
+    listed.into_iter().chain(on_disk).max().unwrap_or(0) + 1
+}
+
+/// Writes `match.json` (or any JSON) whole or not at all: a temporary file, renamed over.
+fn write_json<T: Serialize + ?Sized>(path: &Path, value: &T) -> io::Result<()> {
+    let text = serde_json::to_string_pretty(value).map_err(io::Error::other)?;
+    let temp = path.with_extension("json.tmp");
+    std::fs::write(&temp, text + "\n")?;
+    std::fs::rename(&temp, path)
 }
 
 /// The match's video, if `match.json` names one (a plain file name: never a path out of
@@ -595,6 +697,93 @@ mod tests {
         assert_eq!(library.clip_file("m1", "clips/0001_kill.mp4"), Some(clip));
         assert_eq!(library.clip_file("m1", "clips/../../secret/x.mp4"), None);
         assert_eq!(library.clip_file("m1", "clips/unlisted.mp4"), None);
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn clips_made_in_the_review_are_numbered_after_the_rest_and_listed() {
+        let root = temp_dir("addclip");
+        let matches = root.join("matches");
+        let dir = matches.join("m1");
+        std::fs::create_dir_all(dir.join(CLIPS_DIR)).unwrap();
+        std::fs::write(dir.join(VIDEO_FILE), b"video").unwrap();
+        // Clip 1 is listed; clip 3's file was left behind by something else.
+        std::fs::write(dir.join(CLIPS_DIR).join("0003_old.mp4"), b"").unwrap();
+        let ten_minutes = serde_json::json!({ "file": "match.mp4", "frames": 36_000, "fps": 60 });
+        let json = serde_json::json!({
+            "recording": ten_minutes,
+            "clips": [{ "file": "clips/0001_kill.mp4", "fromS": 88, "toS": 108, "label": "kill" }]
+        });
+        std::fs::write(dir.join(MATCH_FILE), json.to_string()).unwrap();
+        let library = Library::new(
+            matches.clone(),
+            root.join("recordings"),
+            SessionConfig::default(),
+        );
+
+        let job = library
+            .plan_clip("m1", (100.4, 125.0), "Double kill", Some(112.0))
+            .unwrap();
+        assert_eq!(
+            (job.video.as_path(), job.folder.as_path()),
+            (dir.join(VIDEO_FILE).as_path(), dir.as_path())
+        );
+        assert_eq!(job.plan.file, "clips/0004_double_kill.mp4");
+        assert_eq!(
+            (job.plan.from_s, job.plan.to_s, job.plan.thumbnail_at_s),
+            (100.0, 125.0, 112.0),
+            "from the keyframe before"
+        );
+        // Kept within the ten minutes recorded; the thumbnail in the middle by default.
+        let late = library.plan_clip("m1", (590.0, 640.0), "", None).unwrap();
+        assert_eq!((late.plan.to_s, late.plan.label.as_str()), (600.0, "clip"));
+        assert!((late.plan.thumbnail_at_s - 599.95).abs() < 1e-9);
+        let outside = library
+            .plan_clip("m1", (700.0, 720.0), "kill", None)
+            .unwrap_err();
+        assert_eq!(outside.kind(), io::ErrorKind::InvalidInput);
+        assert!(library
+            .plan_clip("../m1", (1.0, 5.0), "kill", None)
+            .is_err());
+
+        std::fs::write(dir.join(&job.plan.file), b"clip").unwrap();
+        let shown = library.add_clip("m1", &job.plan.clip(false)).unwrap();
+        assert_eq!(shown["file"], "clips/0004_double_kill.mp4");
+        assert_eq!(
+            shown["path"],
+            dir.join(CLIPS_DIR)
+                .join("0004_double_kill.mp4")
+                .display()
+                .to_string()
+        );
+        assert!(shown.get("thumbnailPath").is_none());
+        let review = library.get("m1").unwrap();
+        assert_eq!(review["clips"].as_array().unwrap().len(), 2);
+        assert_eq!(review["clips"][1]["fromS"], 100.0);
+        assert_eq!(review["recording"], ten_minutes, "the rest is kept");
+
+        // A match without clips yet, and one without its video.
+        let fresh = matches.join("m2");
+        std::fs::create_dir_all(&fresh).unwrap();
+        std::fs::write(fresh.join(VIDEO_FILE), b"video").unwrap();
+        let json =
+            serde_json::json!({ "recording": { "file": "match.mp4", "frames": 600, "fps": 60 } });
+        std::fs::write(fresh.join(MATCH_FILE), json.to_string()).unwrap();
+        let first = library.plan_clip("m2", (1.0, 9.0), "assist", None).unwrap();
+        assert_eq!(first.plan.file, "clips/0001_assist.mp4");
+        library.add_clip("m2", &first.plan.clip(false)).unwrap();
+        assert_eq!(
+            library.get("m2").unwrap()["clips"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+        std::fs::remove_file(fresh.join(VIDEO_FILE)).unwrap();
+        let gone = library
+            .plan_clip("m2", (1.0, 9.0), "assist", None)
+            .unwrap_err();
+        assert_eq!(gone.kind(), io::ErrorKind::NotFound);
         std::fs::remove_dir_all(&root).ok();
     }
 

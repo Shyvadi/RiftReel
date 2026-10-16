@@ -23,18 +23,12 @@ use tokio::sync::{watch, Mutex};
 use tokio::task::JoinHandle;
 
 use super::audio::{self, AudioRun, SourceConfig, SourceReport};
-use super::clips::{self, Clip, ClipPlan};
 use super::display::{self, Display};
 use super::ffmpeg::{
     self, CapturePlan, CaptureRun, EncoderFamily, Priority, Progress, StartEstimate,
 };
 use super::probe;
 use crate::library;
-use crate::tracker::moments::Moment;
-use crate::tracker::normalize::Marker;
-
-/// Seconds between keyframes (`-g` is the frame rate): where stream-copy cuts can start.
-const KEYFRAME_S: f64 = 1.0;
 
 /// The `[capture]` settings in effect, plus where things go.
 #[derive(Debug, Clone, PartialEq)]
@@ -182,13 +176,6 @@ pub trait CaptureBackend: Send + Sync + 'static {
         file: PathBuf,
         audio_lead_s: Option<f64>,
     ) -> BoxFuture<'_, Result<(), String>>;
-    /// Cuts one clip of `video` into `folder`. Returns whether its thumbnail was made.
-    fn cut_clip(
-        &self,
-        video: PathBuf,
-        folder: PathBuf,
-        plan: ClipPlan,
-    ) -> BoxFuture<'_, Result<bool, String>>;
 }
 
 /// The real backend: DXGI for the monitor, the ffmpeg sidecar for everything else.
@@ -286,15 +273,6 @@ impl CaptureBackend for FfmpegBackend {
         audio_lead_s: Option<f64>,
     ) -> BoxFuture<'_, Result<(), String>> {
         Box::pin(async move { ffmpeg::remux_to_mp4(self.binary()?, &file, audio_lead_s).await })
-    }
-
-    fn cut_clip(
-        &self,
-        video: PathBuf,
-        folder: PathBuf,
-        plan: ClipPlan,
-    ) -> BoxFuture<'_, Result<bool, String>> {
-        Box::pin(async move { ffmpeg::cut_clip(self.binary()?, &video, &folder, &plan).await })
     }
 }
 
@@ -466,37 +444,6 @@ impl CaptureController {
             }
             recording => recording,
         }
-    }
-}
-
-impl CaptureController {
-    /// Cuts every moment of a finished recording into a clip with a stream copy, one after
-    /// the other at low priority. Moments the video doesn't cover are skipped; a clip that
-    /// fails is left out (and logged).
-    pub async fn cut_clips(
-        &self,
-        recording: &RecordingInfo,
-        moments: &[Moment],
-        markers: &[Marker],
-    ) -> Vec<Clip> {
-        let video = recording.folder.join(&recording.file);
-        let video_s = recording.frames as f64 / f64::from(recording.fps.max(1));
-        let mut cut = Vec::new();
-        for plan in clips::plan_clips(moments, markers, video_s, KEYFRAME_S) {
-            let file = plan.file.clone();
-            match self
-                .backend
-                .cut_clip(video.clone(), recording.folder.clone(), plan.clone())
-                .await
-            {
-                Ok(thumbnail) => cut.push(plan.clip(thumbnail)),
-                Err(error) => tracing::warn!(%file, %error, "could not cut a clip"),
-            }
-        }
-        if !cut.is_empty() {
-            tracing::info!(clips = cut.len(), "highlight clips cut");
-        }
-        cut
     }
 }
 
@@ -968,9 +915,6 @@ mod tests {
         finished: StdMutex<Vec<PathBuf>>,
         /// The audio lead each remux was given.
         leads: StdMutex<Vec<Option<f64>>>,
-        /// Clips cut; a label in `failing_clips` fails.
-        cuts: StdMutex<Vec<ClipPlan>>,
-        failing_clips: Vec<&'static str>,
         /// Audio sources started, and stopped.
         audio_started: StdMutex<Vec<Vec<SourceConfig>>>,
         audio_stopped: Arc<AtomicUsize>,
@@ -987,8 +931,6 @@ mod tests {
                 plans: StdMutex::new(Vec::new()),
                 finished: StdMutex::new(Vec::new()),
                 leads: StdMutex::new(Vec::new()),
-                cuts: StdMutex::new(Vec::new()),
-                failing_clips: Vec::new(),
                 audio_started: StdMutex::new(Vec::new()),
                 audio_stopped: Arc::new(AtomicUsize::new(0)),
                 forgotten: AtomicUsize::new(0),
@@ -1095,24 +1037,6 @@ mod tests {
                 self.finished.lock().unwrap().push(file);
                 self.leads.lock().unwrap().push(audio_lead_s);
                 Ok(())
-            })
-        }
-
-        fn cut_clip(
-            &self,
-            _video: PathBuf,
-            folder: PathBuf,
-            plan: ClipPlan,
-        ) -> BoxFuture<'_, Result<bool, String>> {
-            Box::pin(async move {
-                if self.failing_clips.contains(&plan.label.as_str()) {
-                    return Err("ffmpeg failed".into());
-                }
-                std::fs::create_dir_all(folder.join("clips")).unwrap();
-                std::fs::write(folder.join(&plan.file), b"clip").unwrap();
-                self.cuts.lock().unwrap().push(plan.clone());
-                // Every other clip goes without a thumbnail.
-                Ok(self.cuts.lock().unwrap().len() % 2 == 1)
             })
         }
     }
@@ -1627,79 +1551,6 @@ mod tests {
         assert!(backend.plans.lock().unwrap()[0].audio.is_empty());
         assert_eq!(*backend.leads.lock().unwrap(), [None]);
         assert!(recording.info.audio.is_none());
-        std::fs::remove_dir_all(&dir).ok();
-    }
-
-    #[tokio::test]
-    async fn every_moment_becomes_a_clip_and_failures_are_left_out() {
-        use crate::tracker::normalize::{MarkerKind, MarkerLabel};
-
-        let backend = Arc::new(FakeBackend {
-            failing_clips: vec!["death"],
-            ..Arc::into_inner(FakeBackend::new(vec![])).unwrap()
-        });
-        let Setup {
-            dir,
-            backend,
-            controller,
-        } = setup("clips", backend, true);
-        let folder = dir.join("matches").join("m");
-        std::fs::create_dir_all(&folder).unwrap();
-        let marker = |id, label, video: f64| Marker {
-            id,
-            kind: MarkerKind::Kill,
-            label,
-            game_time_s: video - 30.0,
-            video_time_s: Some(video),
-            pre_s: 12.0,
-            post_s: 8.0,
-            stolen: false,
-            by_team: false,
-            riot_event_ids: vec![],
-        };
-        let markers = [
-            marker(1, MarkerLabel::Kill, 100.0),
-            marker(2, MarkerLabel::Death, 300.0),
-            marker(3, MarkerLabel::TripleKill, 500.0),
-        ];
-        let moment = |label, id| Moment {
-            start_s: 0.0,
-            end_s: 0.0,
-            label,
-            marker_ids: vec![id],
-        };
-        let moments = [
-            moment(MarkerLabel::Kill, 1),
-            moment(MarkerLabel::Death, 2),
-            moment(MarkerLabel::TripleKill, 3),
-        ];
-        let recording = RecordingInfo {
-            file: "match.mp4".into(),
-            start_wall_ms: 0,
-            end_wall_ms: 0,
-            game_time_at_start_s: None,
-            encoder: "h264_nvenc".into(),
-            width: 2560,
-            height: 1440,
-            fps: 60,
-            bitrate_kbps: 10_000,
-            frames: 60 * 1800,
-            dropped_frames: 0,
-            duplicated_frames: 0,
-            error: None,
-            audio: None,
-            folder: folder.clone(),
-        };
-        let clips = controller.cut_clips(&recording, &moments, &markers).await;
-        assert_eq!(
-            clips.iter().map(|c| c.file.as_str()).collect::<Vec<_>>(),
-            ["clips/0001_kill.mp4", "clips/0003_triple_kill.mp4"],
-            "the death's cut failed and is left out; numbers follow the moments"
-        );
-        assert_eq!((clips[0].from_s, clips[0].to_s), (88.0, 108.0));
-        assert_eq!(clips[0].thumbnail.as_deref(), Some("thumbs/0001.jpg"));
-        assert_eq!(clips[1].thumbnail, None, "made without a thumbnail");
-        assert_eq!(backend.cuts.lock().unwrap().len(), 2);
         std::fs::remove_dir_all(&dir).ok();
     }
 

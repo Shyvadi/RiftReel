@@ -5,6 +5,7 @@ fn main() {
         "get_status",
         "list_matches",
         "get_match",
+        "save_clip",
         "set_clip_favorite",
         "reveal_clip",
     ]);

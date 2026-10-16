@@ -4,17 +4,20 @@ A lightweight, local-first **League of Legends** clip recorder for Windows. It i
 clean-room alternative to Overwolf's Outplayed, with no ads, no telemetry and no
 Overwolf runtime.
 
-Status: **phases 0 and 1 of the [blueprint](docs/03-downplayed-blueprint.md#12-roadmap)**,
-the first milestone of phase 2 (full-match video capture, no audio yet) and the first
-piece of phase 3's match view. The tray app, settings, scrubbed logging, Riot's local
-API clients and the highlight tracker work. Each tracked match is recorded to
-`match.mp4` beside its `match.json`: an ffmpeg sidecar captures the monitor League runs
-on with Desktop Duplication (`ddagrab`, nothing injected into the game) and the GPU's
-encoder, straight to disk. The window shows whether the League client is detected, the
-tracker is ready and the recorder is running, lists every tracked match and every
-fixture recording, and reviews one: result, K/D/A, the video, and a timeline of moments
-and markers that seeks the video. After each game it opens on that game's review, once
-the game has closed. Audio, the highlights ring buffer and clip export come next.
+Status: **phases 0–2 of the [blueprint](docs/03-downplayed-blueprint.md#12-roadmap)**
+and the first pieces of phase 3's match view. The tray app, settings, scrubbed logging,
+Riot's local API clients and the highlight tracker work. Each tracked match is recorded
+to `match.mp4` beside its `match.json`, with nothing to press: an ffmpeg sidecar
+captures the monitor League runs on with Desktop Duplication (`ddagrab`, nothing
+injected into the game) and the GPU's encoder, straight to disk, and the sound
+(everything the output device plays, or only League's, plus the microphone if asked) is
+mixed in as it records. Nothing is clipped during the game. The window shows whether the
+League client is detected, the tracker is ready and the recorder is running, lists every
+tracked match and every fixture recording, and reviews one: result, K/D/A, the video, a
+timeline of moments and markers that seeks it, and clips. ✂ saves a highlight as a clip,
+or mark in and out on the player to save any part; each is a stream copy out of the
+recording, listed with a thumbnail, playable, a favorite or shown in Explorer. After
+each game the window opens on that game's review, once the game has closed.
 
 | Doc | What it covers |
 |---|---|
@@ -72,8 +75,9 @@ cargo run --bin downplayed-dev -- replay fixtures/lol/ranked_win.json
 recordings folder the window lists (see [fixtures/lol/README.md](fixtures/lol/README.md)),
 and `downplayed-dev eog` prints what Downplayed reads from the end-of-game stats.
 `downplayed-dev probe` runs the encoder probe (NVENC → AMF → QSV → CPU) and lists the
-monitors, and `downplayed-dev capture 30` records 30 seconds the way a match is recorded
-and prints the frame, dropped-frame and duplicated-frame counts.
+monitors, `downplayed-dev audio` lists the sound devices, and `downplayed-dev capture 30`
+records 30 seconds the way a match is recorded and prints the frame, dropped-frame and
+duplicated-frame counts and how the audio went.
 
 > **This machine:** Visual Studio 2022 Community has a partial MSVC 14.42 toolset (no
 > headers). `cc-rs` picks it first, so building `ring` fails with "Cannot open include
@@ -87,7 +91,7 @@ and prints the frame, dropped-frame and duplicated-frame counts.
 |---|---|
 | Settings | `%APPDATA%\Downplayed\settings.toml` (created on first run; every value optional) |
 | Logs | `%LOCALAPPDATA%\Downplayed\logs\downplayed.log`, 5 × 5 MB rotation, Riot identifiers scrubbed |
-| Matches | `%LOCALAPPDATA%\Downplayed\library\League of Legends\<date>_<time>_<queue>_<champion>\` (UTC), one folder per tracked match: `match.json`, and `match.mp4` when it was recorded |
+| Matches | `%LOCALAPPDATA%\Downplayed\library\League of Legends\<date>_<time>_<queue>_<champion>\` (UTC), one folder per tracked match: `match.json`, `match.mp4` when it was recorded, and the clips made from it in `clips\` with their thumbnails in `thumbs\` |
 | Encoder probe | `%LOCALAPPDATA%\Downplayed\capture-probe.json`: which encoder works here, probed once per ffmpeg binary |
 | Recordings | `%LOCALAPPDATA%\Downplayed\recordings`, where `downplayed-dev record` saves by default |
 | `DOWNPLAYED_HOME` | Put settings, logs, matches and recordings under one folder instead (development) |
@@ -99,7 +103,11 @@ Capture settings live in `[capture]`: `enabled`, `fps` (60), `bitrate_mbps` (10)
 The resolution is the monitor's League runs on. While a match is recorded ffmpeg writes
 a fragmented MP4 with a keyframe every second, so a crash keeps the file; when it ends
 the file is remuxed (a stream copy) into a regular MP4, which a player opens without
-reading through it.
+reading through it, and the audio is moved into sync with the video. `[capture.audio]`
+picks the sound: `enabled`, `game_only` (only League's sound, not everything the output
+device plays), `output_device` and `microphone_device` (part of a name; empty for the
+default), `microphone` (off by default) and the volumes. Track 0 is the mix; each
+source also gets a track of its own.
 
 ## Layout
 
@@ -113,8 +121,9 @@ src-tauri/src/
   league/tls.rs              trust only Riot's root (certs/riotgames.pem), strict verification
   tracker/                   normalize, streaks, moments, clock, machine (B3), session, runtime
   capture/                   ffmpeg sidecar (ddagrab + NVENC/AMF/QSV), encoder probe, monitor
-                             lookup (DXGI), controller that records each match
-  library.rs                 match folders: match.json, match.mp4
+                             lookup (DXGI), WASAPI audio on QPC time, clip cutting, the
+                             controller that records each match
+  library.rs                 match folders: match.json, match.mp4, clips
   replay.rs, bin/            fixture replay and the downplayed-dev tool
 src-tauri/tests/             fake HTTPS Live Client API + fake LCU, end-to-end runtime tests
 fixtures/lol/                synthetic Live Client / LCU fixtures and expected replay output

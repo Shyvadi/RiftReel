@@ -3,6 +3,7 @@
 //! each match; each match it finishes is saved to the library and, by default, opened
 //! for review once the game has closed.
 
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
@@ -10,7 +11,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, RunEvent};
 use tokio::sync::{mpsc, watch};
 
-use crate::capture::{CaptureConfig, CaptureController};
+use crate::capture::{ffmpeg, CaptureConfig, CaptureController};
 use crate::league::client::scan_processes;
 use crate::league::live::LiveClient;
 use crate::library::{Library, MatchCard};
@@ -38,6 +39,11 @@ struct AppState {
     library: Arc<Library>,
     /// A match the window should open on when it next asks (it was just created for it).
     review_request: Mutex<Option<String>>,
+    /// The ffmpeg that cuts clips (the one capture uses).
+    ffmpeg: Option<PathBuf>,
+    /// Edits to a saved `match.json` (a clip saved, a favorite) go one at a time; a clip
+    /// is numbered after the ones already there.
+    match_edits: tokio::sync::Mutex<()>,
 }
 
 #[derive(Serialize)]
@@ -92,6 +98,47 @@ async fn get_match(
         .ok_or_else(|| "match not found".to_owned())
 }
 
+/// Cuts a clip out of a saved match's recording and lists it in its `match.json`: a
+/// stream copy (a second or two, nothing re-encoded) of `fromS`–`toS` in video seconds,
+/// starting on the keyframe at or before `fromS`. Returns the clip as `get_match` lists
+/// clips.
+#[tauri::command]
+async fn save_clip(
+    id: String,
+    from_s: f64,
+    to_s: f64,
+    label: Option<String>,
+    thumbnail_s: Option<f64>,
+    state: tauri::State<'_, AppState>,
+) -> Result<serde_json::Value, String> {
+    let binary = state
+        .ffmpeg
+        .clone()
+        .ok_or("ffmpeg not found (run tools/fetch-ffmpeg.ps1, or set [capture] ffmpeg_path)")?;
+    let _one_at_a_time = state.match_edits.lock().await;
+    let library = state.library.clone();
+    let match_id = id.clone();
+    let label = label.unwrap_or_default();
+    let job = tauri::async_runtime::spawn_blocking(move || {
+        library.plan_clip(&match_id, (from_s, to_s), &label, thumbnail_s)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())?;
+    let thumbnail = ffmpeg::cut_clip(&binary, &job.video, &job.folder, &job.plan).await?;
+    let clip = job.plan.clip(thumbnail);
+    tracing::info!(
+        file = %clip.file,
+        seconds = (clip.to_s - clip.from_s).round() as u64,
+        "clip saved"
+    );
+    let library = state.library.clone();
+    tauri::async_runtime::spawn_blocking(move || library.add_clip(&id, &clip))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())
+}
+
 /// Marks a clip of a saved match as a favorite, or not.
 #[tauri::command]
 async fn set_clip_favorite(
@@ -100,6 +147,7 @@ async fn set_clip_favorite(
     favorite: bool,
     state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
+    let _one_at_a_time = state.match_edits.lock().await;
     let library = state.library.clone();
     let changed = tauri::async_runtime::spawn_blocking(move || {
         library.set_clip_favorite(&id, &file, favorite)
@@ -184,11 +232,14 @@ pub fn run() {
             paths,
             library: library.clone(),
             review_request: Mutex::new(None),
+            ffmpeg: ffmpeg::locate(capture.ffmpeg.as_deref()),
+            match_edits: tokio::sync::Mutex::new(()),
         })
         .invoke_handler(tauri::generate_handler![
             get_status,
             list_matches,
             get_match,
+            save_clip,
             set_clip_favorite,
             reveal_clip
         ])

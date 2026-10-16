@@ -14,7 +14,6 @@ use futures_util::future::BoxFuture;
 use tokio::sync::{mpsc, oneshot, watch};
 
 use downplayed_lib::capture::audio::{AudioRun, SourceConfig};
-use downplayed_lib::capture::clips::ClipPlan;
 use downplayed_lib::capture::controller::{CaptureBackend, CaptureTimings};
 use downplayed_lib::capture::display::Display;
 use downplayed_lib::capture::ffmpeg::{CapturePlan, CaptureRun, ExitReport, Progress};
@@ -483,7 +482,6 @@ struct FakeCapture {
     plans: Mutex<Vec<CapturePlan>>,
     encoder_asks: AtomicUsize,
     remuxed: AtomicUsize,
-    clips: AtomicUsize,
 }
 
 impl FakeCapture {
@@ -492,7 +490,6 @@ impl FakeCapture {
             plans: Mutex::new(Vec::new()),
             encoder_asks: AtomicUsize::new(0),
             remuxed: AtomicUsize::new(0),
-            clips: AtomicUsize::new(0),
         })
     }
 }
@@ -573,23 +570,6 @@ impl CaptureBackend for FakeCapture {
         Box::pin(async move {
             self.remuxed.fetch_add(1, Ordering::SeqCst);
             Ok(())
-        })
-    }
-
-    fn cut_clip(
-        &self,
-        _video: PathBuf,
-        folder: PathBuf,
-        plan: ClipPlan,
-    ) -> BoxFuture<'_, Result<bool, String>> {
-        Box::pin(async move {
-            for file in [&plan.file, &plan.thumbnail] {
-                let path = folder.join(file);
-                std::fs::create_dir_all(path.parent().unwrap()).map_err(|e| e.to_string())?;
-                std::fs::write(path, b"clip").map_err(|e| e.to_string())?;
-            }
-            self.clips.fetch_add(1, Ordering::SeqCst);
-            Ok(true)
         })
     }
 }
@@ -685,11 +665,6 @@ async fn the_match_is_recorded_and_saved_with_its_video() {
     assert!(summary.markers.iter().all(|m| m.video_time_s.is_some()));
     assert_eq!(backend.plans.lock().unwrap().len(), 1);
     assert_eq!(backend.remuxed.load(Ordering::SeqCst), 1);
-    // The moments the (short) test video covers were cut as clips into its folder.
-    assert_eq!(summary.clips.len(), backend.clips.load(Ordering::SeqCst));
-    for clip in &summary.clips {
-        assert!(recording.folder.join(&clip.file).is_file(), "{}", clip.file);
-    }
     h.wait_for("idle, recorder ready", |s| {
         s.state == TrackerState::Idle && capture_state(s) == Some(CaptureState::Idle)
     })

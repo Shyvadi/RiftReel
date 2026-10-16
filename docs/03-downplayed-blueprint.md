@@ -17,9 +17,11 @@ these behaviors and from Riot's public interfaces, not from Outplayed's code or 
 
 **Goals**
 
-1. Parity with Outplayed's League experience: match detection, full-match recording,
-   automatic highlight markers with the same default pre/post-roll windows, manual
-   "save replay" hotkey, match library with KDA/champion/result, clip export.
+1. Parity with Outplayed's League experience as it is used here (`fullMatch` mode):
+   match detection, full-match recording, automatic highlight markers with the same
+   default pre/post-roll windows, match library with KDA/champion/result, and clips made
+   in the review after the game (Outplayed's quick trim). Everything during the game is
+   automatic: nothing to press, nothing clipped while it runs.
 2. Small, predictable footprint: one Rust process + one encoder process while recording,
    **no UI process at all** while the window is closed.
 3. Zero ads, zero telemetry, no remote configuration, no remotely loaded scripts.
@@ -210,10 +212,10 @@ offset across API hiccups.
   asset protocol (at most 1000 KiB per ranged read): opening the fragmented file took
   8.9 s, 1802 requests and 1.76 GB read; the remuxed file 22 ms, 2 requests and 1.4 MB.
   The remux took 2 s with a 37 MB peak.
-- **Highlights/manual mode:** a disk ring buffer of 2 s MPEG-TS segments
-  (`-f segment -segment_time 2 -segment_wrap N`). Saving concatenates the needed
-  segments with `-c copy`. RAM stays flat regardless of buffer length, unlike an
-  in-memory replay buffer.
+- **No highlights/manual modes (dropped 2026-10-16):** a disk ring buffer of MPEG-TS
+  segments that saves clips during the game was prototyped and dropped at the user's
+  call. Nothing is clipped during the game; clips are cut from `match.mp4` in the
+  review afterwards (§6).
 - **Audio:** capture in Rust via WASAPI (loopback + microphone; optional per-process
   loopback for game-only audio, which mirrors Outplayed's `captureOnlyGameAudio`).
   Stream PCM over named pipes as separate ffmpeg inputs with wallclock timestamps,
@@ -234,26 +236,21 @@ offset across API hiccups.
 ## 6. Capture modes
 
 Outplayed's values are `highlights | fullMatch | fullSession | manual`; League is set to
-`fullMatch` on this machine.
+`fullMatch` on this machine, and that is the only mode Downplayed has (decided with the
+user, 2026-10-16):
 
-| Downplayed mode | Behavior |
-|---|---|
-| `full_match` (default) | Record GameStart → GameEnd. Markers on the timeline. Auto-cut highlight clips at match end with stream copy (no re-encode). |
-| `highlights` | Disk ring buffer. Each moment is saved as a clip when its post-roll elapses. No full match kept. |
-| `manual` | Ring buffer. Only the hotkey saves the last N seconds (default 20 s, Outplayed's `manualVideoCaptureLength`). |
+- **During the game:** record GameStart → GameEnd (plus the end screen) to `match.mp4`,
+  and mark highlights on its timeline as they happen. Nothing to press, nothing cut.
+- **After the game:** the review plays each highlight straight from the recording. A clip
+  file exists only when the user makes one there: ✂ on a highlight saves its pre/post-
+  roll window, or mark in/out on the player saves any part. Each is a stream copy out of
+  `match.mp4` (no re-encode, a second or two), starting on the keyframe before.
 
-Hotkey semantics to match Outplayed (static read, doc 01 §4):
-
-- **F8 (Save replay):** past = 20 s, future = 0.
-- **Ctrl+F4 (start/stop):** opens a capture with 5 s pre-roll; it closes on the second
-  press or at match end.
-- **Ctrl+F2 (screenshot):** saves to `<match>\Screenshots`.
-
-Outplayed keeps an in-memory OBS replay buffer of `2 × max(180 s, …)` (6 min by
-default) for highlight mode. Downplayed's disk ring buffer makes that length cost
-nothing in RAM.
-
-`fullSession` (launch-to-exit) adds little for League and is dropped.
+This is how Outplayed's `fullMatch` mode works (doc 01 §8): highlights are events on the
+full match's timeline, and a clip file comes from the player's quick trim (`CutVideo`).
+`highlights` and `manual` (an in-memory OBS replay buffer, clips saved during the game,
+F8 Save replay) and `fullSession` are not carried over; nor are Outplayed's hotkeys,
+which only those modes need.
 
 ---
 
@@ -318,14 +315,14 @@ with `time` + `timing.past/future`) to recover markers. Ignore every `owad*`, `o
 1. **Matches:** cards with champion icon, queue, W/L, K/D/A, duration and date.
    Filters for champion, queue, result and has-multikill.
 2. **Match view:** HTML5 `<video>` streaming from disk via Tauri's asset protocol (never
-   loaded into memory). Timeline with marker icons, a moment list, "export clip" and
-   "favorite".
+   loaded into memory). Timeline with marker icons, a moment list that plays each
+   highlight from the recording, ✂ to save a highlight as a clip, mark in/out to save
+   any part, and "favorite".
 3. **Clips:** grid, favorites, reveal in Explorer, copy file to clipboard.
 4. **Settings:** capture (resolution, fps, bitrate, encoder), audio (devices, game-only),
-   events (per-type toggle + pre/post-roll), hotkeys (Save replay `F8`, Start/stop
-   `Ctrl+F4`, Screenshot `Ctrl+F2`, Outplayed's defaults), storage, import.
+   events (per-type toggle + pre/post-roll), storage, import.
 5. **In-game toasts (optional):** a native click-through layered window showing
-   "Double kill saved" for 3 s. Off by default. No webview in game.
+   "Double kill" for 3 s. Off by default. No webview in game.
 
 Champion icons: bundle a small icon set or fetch once from Data Dragon and cache it.
 Make the fetch opt-in so the app works fully offline.
@@ -373,16 +370,16 @@ measurement this investigation did not perform (doc 01 §9).
 |---|---|---|
 | 0 | Tauri scaffold, tray, settings file, logging with redaction | App idles in tray < 30 MB |
 | 1 | `league::client` + `league::live` + normalizer + streaks, with fixture tests and a fake 2999 server | Recorded eventdata fixtures produce the expected markers |
-| 2 | ffmpeg sidecar capture (full match + ring buffer), encoder probe, WASAPI audio pipes | 40-min recording, no drops, A/V in sync (< 40 ms) |
+| 2 | ffmpeg sidecar capture (full match), encoder probe, WASAPI audio pipes, clips cut in the review | 40-min recording, no drops, A/V in sync (< 40 ms) |
 | 3 | Library (sidecar + SQLite), match/clip UI, stream-copy clip cutting, thumbnails | End-to-end: play a game → match card with markers → export clip |
-| 4 | Janitor, low-disk guard, hotkeys, optional toasts, Outplayed importer | Imports `D:\Outplayed\League of Legends` with markers recovered |
+| 4 | Janitor, low-disk guard, optional toasts, Outplayed importer | Imports `D:\Outplayed\League of Legends` with markers recovered |
 | 5 | Polish: montage/concat export, game-only audio, AV1/HEVC presets, perf comparison report | Measured footprint vs Overwolf + Outplayed published in docs |
 
 Proposed repo layout:
 
 ```
 Downplayed/
-  src-tauri/src/{main.rs, tray.rs, settings.rs, hotkeys.rs, overlay.rs}
+  src-tauri/src/{main.rs, tray.rs, settings.rs, overlay.rs}
   src-tauri/src/league/{client.rs, live.rs, models.rs}
   src-tauri/src/tracker/{normalize.rs, streaks.rs, moments.rs, clock.rs}
   src-tauri/src/capture/{controller.rs, ffmpeg.rs, probe.rs, audio_wasapi.rs}
