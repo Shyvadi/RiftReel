@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "The main window may read the tracker status and the match library, ask for match thumbnails, cut a clip out of a saved match's recording, mark a clip as a favorite, show a clip in Explorer, and receive updates. Nothing else.",
+  "description": "The main window may read the tracker status and the match library, ask for match thumbnails, cut a clip out of a saved match's recording, mark a clip as a favorite, show a clip in Explorer, send a clip to the Recycle Bin, copy a clip to the clipboard, save a copy of a clip where the user picks, and receive updates. Nothing else.",
   "windows": ["main"],
   "permissions": [
     "core:event:allow-listen",
@@ -13,6 +13,9 @@
     "allow-get-match",
     "allow-save-clip",
     "allow-set-clip-favorite",
-    "allow-reveal-clip"
+    "allow-reveal-clip",
+    "allow-delete-clip",
+    "allow-copy-clip",
+    "allow-export-clip"
   ]
 }

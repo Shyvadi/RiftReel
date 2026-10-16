@@ -14,9 +14,10 @@ use tokio::sync::{mpsc, watch};
 use crate::capture::{ffmpeg, CaptureConfig, CaptureController};
 use crate::league::client::scan_processes;
 use crate::league::live::LiveClient;
-use crate::library::{Facets, Library, MatchPage, MatchQuery};
+use crate::library::{Facets, Library, MatchPage, MatchQuery, Removal};
 use crate::logging;
 use crate::settings::{AppPaths, LoadOutcome, Settings};
+use crate::shell;
 use crate::thumbnails::Thumbnails;
 use crate::tracker::runtime::{watch_league, Timings, TrackerRuntime, TrackerStatus};
 use crate::tracker::session::MatchSummary;
@@ -196,6 +197,29 @@ async fn set_clip_favorite(
     Ok(())
 }
 
+/// A saved match's listed clip file.
+async fn clip_path(state: &AppState, id: String, file: String) -> Result<PathBuf, String> {
+    let library = state.library.clone();
+    tauri::async_runtime::spawn_blocking(move || library.clip_file(&id, &file))
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "clip not found".to_owned())
+}
+
+/// The window's handle, to own the shell's dialogs.
+fn window_handle(app: &AppHandle) -> Option<isize> {
+    #[cfg(windows)]
+    {
+        let window = app.get_webview_window(tray::MAIN_WINDOW)?;
+        window.hwnd().ok().map(|hwnd| hwnd.0 as isize)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = app;
+        None
+    }
+}
+
 /// Opens Explorer on a clip of a saved match, selected.
 #[tauri::command]
 async fn reveal_clip(
@@ -203,30 +227,82 @@ async fn reveal_clip(
     file: String,
     state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
-    let library = state.library.clone();
-    let path = tauri::async_runtime::spawn_blocking(move || library.clip_file(&id, &file))
-        .await
-        .map_err(|e| e.to_string())?
-        .ok_or_else(|| "clip not found".to_owned())?;
-    reveal_in_explorer(&path)
+    let path = clip_path(&state, id, file).await?;
+    shell::reveal(&path)
 }
 
-fn reveal_in_explorer(path: &std::path::Path) -> Result<(), String> {
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        // Explorer takes `/select,"<path>"` as written; a path can't contain a quote.
-        std::process::Command::new("explorer.exe")
-            .raw_arg(format!("/select,\"{}\"", path.display()))
-            .spawn()
-            .map(|_| ())
-            .map_err(|e| e.to_string())
+/// Sends a clip of a saved match (and its thumbnail) to the Recycle Bin and takes it off
+/// the match. Returns `false` when the recycling was cancelled (nothing changed).
+#[tauri::command]
+async fn delete_clip(
+    id: String,
+    file: String,
+    app: AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<bool, String> {
+    let _one_at_a_time = state.match_edits.lock().await;
+    let owner = window_handle(&app);
+    let library = state.library.clone();
+    let match_id = id.clone();
+    let removal = tauri::async_runtime::spawn_blocking(move || {
+        library.remove_clip(&match_id, &file, |files| shell::recycle(files, owner))
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+    let removed = removal == Removal::Removed;
+    if removed {
+        tracing::info!(%id, "clip sent to the Recycle Bin");
+        let _ = app.emit("matches-changed", &id);
     }
-    #[cfg(not(windows))]
-    {
-        let _ = path;
-        Err("showing files is only supported on Windows".into())
+    Ok(removed)
+}
+
+/// Puts a clip of a saved match on the clipboard as a file, to paste anywhere.
+#[tauri::command]
+async fn copy_clip(
+    id: String,
+    file: String,
+    app: AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    let path = clip_path(&state, id, file).await?;
+    let owner = window_handle(&app);
+    tauri::async_runtime::spawn_blocking(move || shell::copy_files(&[path], owner))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Saves a copy of a clip of a saved match where the user picks ("Save as"). Returns
+/// where it went, or nothing when cancelled.
+#[tauri::command]
+async fn export_clip(
+    id: String,
+    file: String,
+    app: AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<Option<String>, String> {
+    let path = clip_path(&state, id.clone(), file).await?;
+    let name = format!(
+        "{id}_{}",
+        path.file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("clip.mp4")
+    );
+    let owner = window_handle(&app);
+    let chosen = tauri::async_runtime::spawn_blocking(move || shell::save_as(owner, &name))
+        .await
+        .map_err(|e| e.to_string())??;
+    let Some(target) = chosen else {
+        return Ok(None);
+    };
+    if target == path {
+        return Ok(Some(target.display().to_string()));
     }
+    tokio::fs::copy(&path, &target)
+        .await
+        .map_err(|e| format!("could not save {}: {e}", target.display()))?;
+    tracing::info!("clip saved as a copy");
+    Ok(Some(target.display().to_string()))
 }
 
 pub fn run() {
@@ -280,7 +356,10 @@ pub fn run() {
             get_match,
             save_clip,
             set_clip_favorite,
-            reveal_clip
+            reveal_clip,
+            delete_clip,
+            copy_clip,
+            export_clip
         ])
         .setup(move |app| {
             // The review's <video> streams match.mp4 from here, in ranged reads; the

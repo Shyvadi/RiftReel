@@ -9,7 +9,7 @@ use crate::tracker::machine::TrackerState;
 use crate::tracker::runtime::TrackerStatus;
 
 const TRAY_ID: &str = "downplayed";
-const MAIN_WINDOW: &str = "main";
+pub(crate) const MAIN_WINDOW: &str = "main";
 
 /// Menu items updated as the tracker state changes.
 struct TrayItems {

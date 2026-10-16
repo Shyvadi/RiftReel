@@ -15,6 +15,7 @@ pub mod settings;
 pub mod tracker;
 
 mod app;
+mod shell;
 mod thumbnails;
 mod tray;
 

@@ -23,6 +23,9 @@
   let saving = $state(null);
   /** Why the last cut failed, and which it was. */
   let saveError = $state(null);
+  /** A clip waiting for its second "Recycle" click, and the last action's message. */
+  let confirming = $state(null);
+  let clipNotice = $state('');
 
   $effect(() => {
     const wanted = id;
@@ -37,6 +40,8 @@
     markOut = null;
     saving = null;
     saveError = null;
+    confirming = null;
+    clipNotice = '';
     invoke('get_match', { id: wanted })
       .then((value) => {
         if (wanted === id) match = value;
@@ -196,6 +201,55 @@
     }
   }
 
+  let noticeTimer;
+  /** A line under the clips for a few seconds. */
+  function notice(text) {
+    clipNotice = text;
+    clearTimeout(noticeTimer);
+    noticeTimer = setTimeout(() => (clipNotice = ''), 5000);
+  }
+
+  async function copyClip(c) {
+    clipError = '';
+    try {
+      await invoke('copy_clip', { id, file: c.file });
+      notice('Copied: paste it in Explorer, Discord or a chat.');
+    } catch (e) {
+      clipError = String(e);
+    }
+  }
+
+  async function exportClip(c) {
+    clipError = '';
+    try {
+      const to = await invoke('export_clip', { id, file: c.file });
+      if (to) notice(`Saved a copy: ${to}`);
+    } catch (e) {
+      clipError = String(e);
+    }
+  }
+
+  /** Sends a clip to the Recycle Bin, on a second click. */
+  async function recycleClip(c) {
+    if (confirming !== c.file) {
+      confirming = c.file;
+      setTimeout(() => {
+        if (confirming === c.file) confirming = null;
+      }, 4000);
+      return;
+    }
+    confirming = null;
+    clipError = '';
+    try {
+      if (!(await invoke('delete_clip', { id, file: c.file }))) return;
+      if (shown?.file === c.file) clip = null;
+      match.clips = match.clips.filter((other) => other.file !== c.file);
+      notice('Moved to the Recycle Bin.');
+    } catch (e) {
+      clipError = String(e);
+    }
+  }
+
   /** A click on the timeline's background: play from that game time. */
   function seekTimeline(event) {
     if (!playerSrc || offset == null) return;
@@ -315,6 +369,7 @@
     <section class="card">
       <h3>Clips <span class="muted">{clips.length}</span></h3>
       {#if clipError}<p class="error small">{clipError}</p>{/if}
+      {#if clipNotice}<p class="notice small">{clipNotice}</p>{/if}
       <ul class="clips">
         {#each clips as c, i (c.file)}
           <li class:current={shown?.file === c.file}>
@@ -335,6 +390,8 @@
             <div class="clip-info">
               <span class="name {category(c.label)}"><i></i><span class="label">{words(c.label)}</span></span>
               <span class="muted num">{gameClock(c.fromS)}</span>
+            </div>
+            <div class="clip-actions">
               <button
                 type="button"
                 class="icon"
@@ -350,6 +407,30 @@
                 title="Show in Explorer"
                 aria-label="Show clip {i + 1} in Explorer"
                 onclick={() => reveal(c)}>📂</button
+              >
+              <button
+                type="button"
+                class="icon"
+                disabled={!c.path}
+                title="Copy (paste it anywhere)"
+                aria-label="Copy clip {i + 1}"
+                onclick={() => copyClip(c)}>📋</button
+              >
+              <button
+                type="button"
+                class="icon"
+                disabled={!c.path}
+                title="Save a copy as…"
+                aria-label="Save a copy of clip {i + 1}"
+                onclick={() => exportClip(c)}>💾</button
+              >
+              <button
+                type="button"
+                class="icon recycle"
+                class:confirm={confirming === c.file}
+                title="Move to the Recycle Bin"
+                aria-label={confirming === c.file ? `Confirm: recycle clip ${i + 1}` : `Recycle clip ${i + 1}`}
+                onclick={() => recycleClip(c)}>{confirming === c.file ? 'Recycle?' : '🗑'}</button
               >
             </div>
           </li>
@@ -738,8 +819,25 @@
     display: flex;
     align-items: center;
     gap: 6px;
-    padding: 6px 8px;
+    padding: 6px 8px 0;
     font-size: 12px;
+  }
+  .clip-actions {
+    display: flex;
+    gap: 2px;
+    padding: 2px 4px 4px;
+  }
+  .recycle {
+    margin-left: auto;
+  }
+  .recycle.confirm {
+    color: var(--lose);
+    font-size: 12px;
+    font-weight: 600;
+  }
+  .notice {
+    color: var(--accent);
+    margin: 0 0 8px;
   }
   .clip-info .name {
     flex: 1;

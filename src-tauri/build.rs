@@ -10,6 +10,9 @@ fn main() {
         "save_clip",
         "set_clip_favorite",
         "reveal_clip",
+        "delete_clip",
+        "copy_clip",
+        "export_clip",
     ]);
     tauri_build::try_build(tauri_build::Attributes::new().app_manifest(manifest))
         .expect("tauri-build failed");
