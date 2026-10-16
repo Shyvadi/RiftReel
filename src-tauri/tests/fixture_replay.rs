@@ -7,10 +7,11 @@
 
 mod support;
 
+use downplayed_lib::league::models::EogStatsBlock;
 use downplayed_lib::replay::{render_text, replay_with, LcuRecording, ReplayReport};
 use downplayed_lib::tracker::normalize::{GameResult, Kda, MarkerConfig, MarkerKind, MarkerLabel};
-use downplayed_lib::tracker::session::SessionConfig;
-use support::{fixture_path, load_fixture};
+use downplayed_lib::tracker::session::{ResultSource, SessionConfig};
+use support::{fixture_path, load_fixture, load_json};
 
 fn config(extras: bool, team: bool) -> SessionConfig {
     let mut markers = if extras {
@@ -38,6 +39,7 @@ fn rendered_replays_match_expected_output() {
         ("aram_loss", false),
         ("penta_cap", false),
         ("spectator", false),
+        ("aram_mayhem_win", false),
     ];
     let update = std::env::var_os("UPDATE_EXPECTED").is_some();
     let mut mismatches = Vec::new();
@@ -213,4 +215,62 @@ fn spectator_fixture_produces_nothing() {
     let report = run("spectator", false);
     assert!(report.spectator);
     assert!(report.summary.markers.is_empty());
+}
+
+/// A real ARAM: Mayhem game, recorded with `downplayed-dev record` (pseudonymised). Its
+/// end-of-game block is Riot's actual payload, so this pins the stat names
+/// `EogStatsBlock` reads against what the client sends.
+#[test]
+fn recorded_game_end_of_game_stats_match_the_scoreboard_and_game_end() {
+    let eog: EogStatsBlock =
+        serde_json::from_value(load_json("lol/lcu/aram_mayhem_win.eog.json")).unwrap();
+    assert_eq!(eog.win(), Some(true), "WIN");
+    assert_eq!(
+        eog.kda(),
+        Some((19, 18, 21)),
+        "CHAMPIONS_KILLED / NUM_DEATHS / ASSISTS"
+    );
+    assert_eq!(eog.game_length, 1317);
+    assert_eq!(eog.game_mode, "KIWI");
+    assert!(eog
+        .teams
+        .iter()
+        .any(|t| t.is_player_team && t.is_winning_team));
+
+    // The same numbers as the game's final scoreboard and Riot's GameEnd event.
+    let fixture = load_fixture("aram_mayhem_win");
+    let me = fixture
+        .players()
+        .unwrap()
+        .into_iter()
+        .find(|p| p.riot_id.as_deref() == Some("Downplayer#DP1"))
+        .unwrap();
+    assert_eq!(
+        (me.scores.kills, me.scores.deaths, me.scores.assists),
+        (19, 18, 21)
+    );
+    let game_end = fixture
+        .events()
+        .unwrap()
+        .into_iter()
+        .find(|e| e.event_name == "GameEnd")
+        .unwrap();
+    assert_eq!(game_end.result.as_deref(), Some("Win"));
+
+    // And the replay takes its result from the end-of-game stats.
+    let summary = run("aram_mayhem_win", false).summary;
+    assert_eq!(summary.result, Some(GameResult::Win));
+    assert_eq!(summary.result_source, Some(ResultSource::EndOfGameStats));
+    assert_eq!(
+        summary.kda,
+        Some(Kda {
+            kills: 19,
+            deaths: 18,
+            assists: 21
+        })
+    );
+    assert_eq!(summary.queue_id, Some(2400));
+    assert_eq!(summary.queue.as_deref(), Some("ARAM: Mayhem"));
+    assert_eq!(summary.champion.as_deref(), Some("Fizz"));
+    assert_eq!(summary.duration_s, Some(1317.0));
 }

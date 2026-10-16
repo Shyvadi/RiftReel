@@ -1,0 +1,308 @@
+{
+  "gameClient": {
+    "observerServerIp": "",
+    "observerServerPort": 0,
+    "running": true,
+    "serverIp": "192.207.0.5",
+    "serverPort": 7218,
+    "visible": true
+  },
+  "gameData": {
+    "gameId": 1,
+    "gameName": "",
+    "isCustomGame": false,
+    "playerChampionSelections": [
+      {
+        "championId": 29,
+        "selectedSkinIndex": 53,
+        "spell1Id": 4,
+        "spell2Id": 32
+      },
+      {
+        "championId": 105,
+        "selectedSkinIndex": 10,
+        "spell1Id": 32,
+        "spell2Id": 4
+      },
+      {
+        "championId": 26,
+        "selectedSkinIndex": 12,
+        "spell1Id": 4,
+        "spell2Id": 32
+      },
+      {
+        "championId": 45,
+        "selectedSkinIndex": 60,
+        "spell1Id": 32,
+        "spell2Id": 4
+      },
+      {
+        "championId": 235,
+        "selectedSkinIndex": 0,
+        "spell1Id": 4,
+        "spell2Id": 32
+      },
+      {
+        "championId": 75,
+        "selectedSkinIndex": 32,
+        "spell1Id": 4,
+        "spell2Id": 32
+      },
+      {
+        "championId": 20,
+        "selectedSkinIndex": 44,
+        "spell1Id": 4,
+        "spell2Id": 32
+      },
+      {
+        "championId": 51,
+        "selectedSkinIndex": 2,
+        "spell1Id": 6,
+        "spell2Id": 4
+      },
+      {
+        "championId": 101,
+        "selectedSkinIndex": 0,
+        "spell1Id": 32,
+        "spell2Id": 4
+      },
+      {
+        "championId": 85,
+        "selectedSkinIndex": 23,
+        "spell1Id": 32,
+        "spell2Id": 4
+      }
+    ],
+    "queue": {
+      "allowablePremadeSizes": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "areFreeChampionsAllowed": true,
+      "assetMutator": "",
+      "category": "PvP",
+      "championsRequiredToPlay": 16,
+      "description": "ARAM: Mayhem",
+      "detailedDescription": "",
+      "gameMode": "KIWI",
+      "gameTypeConfig": {
+        "advancedLearningQuests": false,
+        "allowTrades": false,
+        "banMode": "",
+        "banTimerDuration": 0,
+        "battleBoost": true,
+        "crossTeamChampionPool": false,
+        "deathMatch": false,
+        "doNotRemove": false,
+        "duplicatePick": false,
+        "exclusivePick": false,
+        "id": 21,
+        "learningQuests": false,
+        "mainPickTimerDuration": 0,
+        "maxAllowableBans": 0,
+        "name": "",
+        "onboardCoopBeginner": false,
+        "pickMode": "",
+        "postPickTimerDuration": 0,
+        "reroll": false,
+        "teamChampionPool": false
+      },
+      "id": 2400,
+      "isBotHonoringAllowed": false,
+      "isCustom": false,
+      "isRanked": false,
+      "isTeamBuilderManaged": true,
+      "lastToggledOffTime": 0,
+      "lastToggledOnTime": 0,
+      "mapId": 12,
+      "maximumParticipantListSize": 5,
+      "minLevel": 3,
+      "minimumParticipantListSize": 0,
+      "name": "ARAM: Mayhem",
+      "numPlayersPerTeam": 5,
+      "pickMode": "AllRandomPickStrategy",
+      "queueAvailability": "Available",
+      "queueRewards": {
+        "isChampionPointsEnabled": true,
+        "isIpEnabled": true,
+        "isXpEnabled": true,
+        "partySizeIpRewards": []
+      },
+      "removalFromGameAllowed": false,
+      "removalFromGameDelayMinutes": 0,
+      "shortName": "ARAM: Mayhem",
+      "showPositionSelector": false,
+      "spectatorEnabled": true,
+      "type": "KIWI"
+    },
+    "spectatorKey": "fmHLTXpc2xsKygTS3zdVeg==",
+    "spectatorsAllowed": false,
+    "teamOne": [
+      {
+        "championId": 26,
+        "lastSelectedSkinIndex": 0,
+        "selectedPosition": "NONE",
+        "selectedRole": "NONE.NONE.NONE.UNSELECTED",
+        "summonerInternalName": "",
+        "summonerName": "",
+        "teamOwner": false,
+        "teamParticipantId": 2
+      },
+      {
+        "championId": 45,
+        "lastSelectedSkinIndex": 0,
+        "selectedPosition": "NONE",
+        "selectedRole": "NONE.NONE.NONE.UNSELECTED",
+        "summonerInternalName": "",
+        "summonerName": "",
+        "teamOwner": false,
+        "teamParticipantId": 3
+      },
+      {
+        "championId": 105,
+        "lastSelectedSkinIndex": 0,
+        "selectedPosition": "NONE",
+        "selectedRole": "NONE.NONE.NONE.UNSELECTED",
+        "summonerInternalName": "",
+        "summonerName": "",
+        "teamOwner": false,
+        "teamParticipantId": 2
+      },
+      {
+        "championId": 29,
+        "lastSelectedSkinIndex": 0,
+        "selectedPosition": "NONE",
+        "selectedRole": "NONE.NONE.NONE.UNSELECTED",
+        "summonerInternalName": "",
+        "summonerName": "",
+        "teamOwner": false,
+        "teamParticipantId": 1
+      },
+      {
+        "championId": 235,
+        "lastSelectedSkinIndex": 0,
+        "selectedPosition": "NONE",
+        "selectedRole": "NONE.NONE.NONE.UNSELECTED",
+        "summonerInternalName": "",
+        "summonerName": "",
+        "teamOwner": false,
+        "teamParticipantId": 4
+      }
+    ],
+    "teamTwo": [
+      {
+        "championId": 51,
+        "lastSelectedSkinIndex": 0,
+        "selectedPosition": "NONE",
+        "selectedRole": "NONE.NONE.NONE.UNSELECTED",
+        "summonerInternalName": "",
+        "summonerName": "",
+        "teamOwner": false,
+        "teamParticipantId": 7
+      },
+      {
+        "championId": 101,
+        "lastSelectedSkinIndex": 0,
+        "selectedPosition": "NONE",
+        "selectedRole": "NONE.NONE.NONE.UNSELECTED",
+        "summonerInternalName": "",
+        "summonerName": "",
+        "teamOwner": false,
+        "teamParticipantId": 7
+      },
+      {
+        "championId": 75,
+        "lastSelectedSkinIndex": 0,
+        "selectedPosition": "NONE",
+        "selectedRole": "NONE.NONE.NONE.UNSELECTED",
+        "summonerInternalName": "",
+        "summonerName": "",
+        "teamOwner": false,
+        "teamParticipantId": 5
+      },
+      {
+        "championId": 20,
+        "lastSelectedSkinIndex": 0,
+        "selectedPosition": "NONE",
+        "selectedRole": "NONE.NONE.NONE.UNSELECTED",
+        "summonerInternalName": "",
+        "summonerName": "",
+        "teamOwner": false,
+        "teamParticipantId": 6
+      },
+      {
+        "championId": 85,
+        "lastSelectedSkinIndex": 0,
+        "selectedPosition": "NONE",
+        "selectedRole": "NONE.NONE.NONE.UNSELECTED",
+        "summonerInternalName": "",
+        "summonerName": "",
+        "teamOwner": false,
+        "teamParticipantId": 8
+      }
+    ]
+  },
+  "gameDodge": {
+    "dodgeIds": [],
+    "phase": "None",
+    "state": "Invalid"
+  },
+  "map": {
+    "assets": {
+      "champ-select-background-sound": "lol-game-data/assets/content/src/LeagueClient/GameModeAssets/ARAM/sound/music-cs-allrandom-howlingabyss.ogg",
+      "champ-select-banphase-background-sound": "lol-game-data/assets/content/src/LeagueClient/GameModeAssets/ARAM/sound/music-cs-allrandom-banphase-howlingabyss.ogg",
+      "champ-select-flyout-background": "lol-game-data/assets/content/src/LeagueClient/GameModeAssets/ARAM/img/champ-select-flyout-background.png",
+      "game-select-icon-active": "lol-game-data/assets/content/src/LeagueClient/GameModeAssets/ARAM/img/game-select-icon-active.png",
+      "game-select-icon-active-video": "lol-game-data/assets/content/src/LeagueClient/GameModeAssets/ARAM/video/game-select-icon-active.webm",
+      "game-select-icon-default": "lol-game-data/assets/content/src/LeagueClient/GameModeAssets/ARAM/img/game-select-icon-default.png",
+      "game-select-icon-disabled": "lol-game-data/assets/content/src/LeagueClient/GameModeAssets/ARAM/img/game-select-icon-disabled.png",
+      "game-select-icon-hover": "lol-game-data/assets/content/src/LeagueClient/GameModeAssets/ARAM/img/game-select-icon-hover.png",
+      "game-select-icon-intro-video": "lol-game-data/assets/content/src/LeagueClient/GameModeAssets/ARAM/video/game-select-icon-intro.webm",
+      "gameflow-background": "lol-game-data/assets/content/src/LeagueClient/GameModeAssets/ARAM/img/gameflow-background.jpg",
+      "gameflow-background-dark": "lol-game-data/assets/content/src/LeagueClient/GameModeAssets/ARAM/img/gameflow-background-dark.jpg",
+      "gameselect-button-hover-sound": "lol-game-data/assets/content/src/LeagueClient/GameModeAssets/Shared/sound/sfx-gameselect-button-hover.ogg",
+      "icon-defeat": "lol-game-data/assets/content/src/LeagueClient/GameModeAssets/ARAM/img/icon-defeat.png",
+      "icon-defeat-v2": "lol-game-data/assets/content/src/LeagueClient/GameModeAssets/ARAM/img/icon-defeat-v2.png",
+      "icon-defeat-video": "lol-game-data/assets/content/src/LeagueClient/GameModeAssets/ARAM/video/icon-defeat.webm",
+      "icon-empty": "lol-game-data/assets/content/src/LeagueClient/GameModeAssets/ARAM/img/icon-empty.png",
+      "icon-hover": "lol-game-data/assets/content/src/LeagueClient/GameModeAssets/ARAM/img/icon-hover.png",
+      "icon-leaver": "lol-game-data/assets/content/src/LeagueClient/GameModeAssets/ARAM/img/icon-leaver.png",
+      "icon-leaver-v2": "lol-game-data/assets/content/src/LeagueClient/GameModeAssets/ARAM/img/icon-leaver-v2.png",
+      "icon-loss-forgiven-v2": "lol-game-data/assets/content/src/LeagueClient/GameModeAssets/ARAM/img/icon-loss-forgiven-v2.png",
+      "icon-v2": "lol-game-data/assets/content/src/LeagueClient/GameModeAssets/ARAM/img/icon-v2.png",
+      "icon-victory": "lol-game-data/assets/content/src/LeagueClient/GameModeAssets/ARAM/img/icon-victory.png",
+      "icon-victory-video": "lol-game-data/assets/content/src/LeagueClient/GameModeAssets/ARAM/video/icon-victory.webm",
+      "music-inqueue-loop-sound": "lol-game-data/assets/content/src/LeagueClient/GameModeAssets/ARAM/sound/music-inqueue-loop-howlingabyss.ogg",
+      "parties-background": "lol-game-data/assets/content/src/LeagueClient/GameModeAssets/ARAM/img/parties-background.jpg",
+      "postgame-ambience-loop-sound": "lol-game-data/assets/content/src/LeagueClient/GameModeAssets/ARAM/sound/sfx-ambience-loop-howlingabyss.ogg",
+      "ready-check-background": "lol-game-data/assets/content/src/LeagueClient/GameModeAssets/ARAM/img/ready-check-background.png",
+      "ready-check-background-sound": "lol-game-data/assets/content/src/LeagueClient/GameModeAssets/ARAM/sound/sfx-readycheck-ha-portal.ogg",
+      "sfx-ambience-pregame-loop-sound": "lol-game-data/assets/content/src/LeagueClient/GameModeAssets/ARAM/sound/sfx-ambience-loop-howlingabyss.ogg",
+      "social-icon-leaver": "lol-game-data/assets/content/src/LeagueClient/GameModeAssets/ARAM/img/social-icon-leaver.png",
+      "social-icon-victory": "lol-game-data/assets/content/src/LeagueClient/GameModeAssets/ARAM/img/social-icon-victory.png",
+      "tutorial-bg": "lol-game-data/assets/content/src/LeagueClient/GameModeAssets/GameModeCommon/img/tutorial-bg.png"
+    },
+    "categorizedContentBundles": {},
+    "description": "The Howling Abyss is a bottomless crevasse located in the coldest, cruelest, part of the Freljord. Legends say that, long ago, a great battle took place here on the narrow bridge spanning this chasm. No one remembers who fought here, or why, but it is said that if you listen carefully to the wind you can still hear the cries of the vanquished tossed howling into the Abyss.",
+    "gameMode": "KIWI",
+    "gameModeName": "ARAM",
+    "gameModeShortName": "ARAM",
+    "gameMutator": "",
+    "id": 12,
+    "isRGM": false,
+    "mapStringId": "HA",
+    "name": "Random Map",
+    "perPositionDisallowedSummonerSpells": {},
+    "perPositionRequiredSummonerSpells": {},
+    "platformId": "",
+    "platformName": "",
+    "properties": {
+      "suppressRunesMasteriesPerks": true
+    }
+  },
+  "phase": "InProgress"
+}

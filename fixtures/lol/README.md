@@ -60,6 +60,7 @@ in the integration tests and `downplayed-dev replay` both work this way.
 | `aram_loss.json` | ARAM mode filter, triple kill, executions by champions, `GameEnd` **Lose** (no victory marker) |
 | `penta_cap.json` | Multikill relabelling up to a pentakill, and a long assist chain split by the 60 s moment cap |
 | `spectator.json` | No active player: never tracked |
+| `aram_mayhem_win.json` | **Recorded**, not synthetic: a real ARAM: Mayhem game (`gameMode` `KIWI`, queue 2400) taken with `downplayed-dev record`, pseudonymised. 196 events, double and triple kills, a turret destroyed by a minion, `GameEnd` **Win**. Its `lcu/` files are the client's real payloads |
 
 Run one through the tracker:
 
@@ -81,3 +82,4 @@ shutdown and sprees.
 | `ranked_win.session.json` | `GET /lol-gameflow/v1/session` during `ranked_win` (player lists emptied) |
 | `ranked_win.eog.json` | `GET /lol-end-of-game/v1/eog-stats-block` afterwards (identifiers removed) |
 | `gameflow_phase_frames.json` | WAMP frames from the client WebSocket for one queue → reconnect → end-of-game cycle |
+| `aram_mayhem_win.{session,eog,frames}.json` | Recorded with `aram_mayhem_win.json`. The end-of-game block is Riot's real payload (`localPlayer.stats` has `WIN`, `CHAMPIONS_KILLED`, `NUM_DEATHS`, `ASSISTS`), and `tests/fixture_replay.rs` checks it against the scoreboard and `GameEnd` |
