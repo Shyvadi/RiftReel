@@ -5,7 +5,7 @@
 mod support;
 
 use std::collections::HashSet;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -572,6 +572,10 @@ impl CaptureBackend for FakeCapture {
             Ok(())
         })
     }
+
+    fn free_space(&self, _dir: &Path) -> Option<u64> {
+        None
+    }
 }
 
 fn capture_dir(name: &str) -> PathBuf {
@@ -593,11 +597,14 @@ fn fake_controller(dir: &std::path::Path, backend: Arc<FakeCapture>) -> CaptureC
         ffmpeg: None,
         matches_dir: dir.join("matches"),
         probe_file: dir.join("capture-probe.json"),
+        min_free_bytes: 0,
+        stop_free_bytes: 0,
     };
     CaptureController::new(config, backend).with_timings(CaptureTimings {
         window_poll: Duration::from_millis(5),
         window_wait: Duration::from_secs(5),
         retry_after: Duration::from_millis(5),
+        disk_check: Duration::from_millis(5),
     })
 }
 

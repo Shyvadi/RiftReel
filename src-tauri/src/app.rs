@@ -33,6 +33,8 @@ const PROCESS_SCAN_INTERVAL: Duration = Duration::from_secs(3);
 /// review, and for how long.
 const REVIEW_WAIT_POLL: Duration = Duration::from_secs(2);
 const REVIEW_WAIT_MAX: Duration = Duration::from_secs(15 * 60);
+/// How long a message waits for the game to close before it is dropped.
+const NOTICE_WAIT_MAX: Duration = Duration::from_secs(6 * 60 * 60);
 
 /// Set to open the window at startup (development; normally only the tray opens it).
 /// `hidden` creates it invisible, for smoke tests.
@@ -44,6 +46,8 @@ struct AppState {
     library: Arc<Library>,
     /// A match the window should open on when it next asks (it was just created for it).
     review_request: Mutex<Option<String>>,
+    /// A message for the window (low disk), until it has been shown once.
+    notice: Mutex<Option<String>>,
     /// The ffmpeg that cuts clips (the one capture uses).
     ffmpeg: Option<PathBuf>,
     /// Edits to a saved `match.json` (a clip saved, a favorite) go one at a time; a clip
@@ -62,6 +66,8 @@ struct AppStatus {
     recordings_dir: String,
     /// Open this match's review (set when the window was opened for one).
     open_match: Option<String>,
+    /// Something to tell the user (once).
+    notice: Option<String>,
 }
 
 #[tauri::command]
@@ -75,6 +81,11 @@ fn get_status(state: tauri::State<'_, AppState>) -> AppStatus {
         recordings_dir: state.paths.recordings_dir.display().to_string(),
         open_match: state
             .review_request
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take(),
+        notice: state
+            .notice
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .take(),
@@ -340,11 +351,13 @@ pub fn run() {
 
     let (status_tx, status_rx) = watch::channel(TrackerStatus::default());
     let app = tauri::Builder::default()
+        .plugin(tauri_plugin_notification::init())
         .manage(AppState {
             status: status_rx.clone(),
             paths,
             library: library.clone(),
             review_request: Mutex::new(None),
+            notice: Mutex::new(None),
             ffmpeg: ffmpeg.clone(),
             match_edits: tokio::sync::Mutex::new(()),
         })
@@ -456,13 +469,66 @@ fn start_tracker(
 
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
+        let mut told: Option<String> = None;
         while status_rx.changed().await.is_ok() {
             let status = status_rx.borrow_and_update().clone();
             tray::show_status(&app, &status);
             // Only reaches a window if one is open.
             let _ = app.emit("status", &status);
+            // The drive ran short of space this match: say so once, after the game.
+            let low_disk = status.capture.as_ref().and_then(|c| c.low_disk.clone());
+            if low_disk != told {
+                if let Some(message) = low_disk.clone() {
+                    tauri::async_runtime::spawn(tell_after_game(app.clone(), message));
+                }
+                told = low_disk;
+            }
         }
     });
+}
+
+/// Waits until `League of Legends.exe` isn't running, checking every few seconds. Returns
+/// `false` if it still is after `max`.
+async fn game_closed(max: Duration) -> bool {
+    let started = tokio::time::Instant::now();
+    loop {
+        let running = tauri::async_runtime::spawn_blocking(|| scan_processes().game_running)
+            .await
+            .unwrap_or(true);
+        if !running {
+            return true;
+        }
+        if started.elapsed() >= max {
+            return false;
+        }
+        tokio::time::sleep(REVIEW_WAIT_POLL).await;
+    }
+}
+
+/// Tells the user something once the game has closed (never during it): in the window
+/// if one is open, else as a Windows notification.
+async fn tell_after_game(app: AppHandle, message: String) {
+    if !game_closed(NOTICE_WAIT_MAX).await {
+        return;
+    }
+    if app.get_webview_window(tray::MAIN_WINDOW).is_some() {
+        if let Some(state) = app.try_state::<AppState>() {
+            // A window still loading asks for it; one already up gets the event.
+            *state.notice.lock().unwrap_or_else(PoisonError::into_inner) = Some(message.clone());
+        }
+        let _ = app.emit("notice", &message);
+        return;
+    }
+    use tauri_plugin_notification::NotificationExt;
+    let shown = app
+        .notification()
+        .builder()
+        .title("Downplayed")
+        .body(&message)
+        .show();
+    if let Err(error) = shown {
+        tracing::warn!(%error, "could not show a notification");
+    }
 }
 
 /// Saves each finished match to the library, queues its list thumbnail, then (if
@@ -501,19 +567,9 @@ async fn save_matches(
 /// Without the League client the tracker finishes on `GameEnd`, while the game still
 /// shows its end screen.
 async fn open_review_after_game(app: AppHandle, id: String) {
-    let started = tokio::time::Instant::now();
-    loop {
-        let game_running = tauri::async_runtime::spawn_blocking(|| scan_processes().game_running)
-            .await
-            .unwrap_or(true);
-        if !game_running {
-            break;
-        }
-        if started.elapsed() >= REVIEW_WAIT_MAX {
-            tracing::debug!("game still running; not opening the review");
-            return;
-        }
-        tokio::time::sleep(REVIEW_WAIT_POLL).await;
+    if !game_closed(REVIEW_WAIT_MAX).await {
+        tracing::debug!("game still running; not opening the review");
+        return;
     }
     // An open window switches on the event; a new one asks for its match on load.
     if !tray::show_match(&app, &id) {

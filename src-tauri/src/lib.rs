@@ -5,6 +5,7 @@
 //! through an ffmpeg sidecar ([`capture`]) and the match library ([`library`]).
 
 pub mod capture;
+pub mod disk;
 pub mod league;
 pub mod library;
 pub mod logging;

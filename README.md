@@ -114,6 +114,11 @@ device plays), `output_device` and `microphone_device` (part of a name; empty fo
 default), `microphone` (off by default) and the volumes. Track 0 is the mix; each
 source also gets a track of its own.
 
+`[storage]` guards the library's drive: no recording starts with less than `min_free_gb`
+free (20), and one stops cleanly, keeping its file, below `stop_free_gb` (2). Either is
+said once, after the game: in the window if it is open, else as a Windows notification.
+Nothing is ever shown during a game.
+
 ## Layout
 
 ```

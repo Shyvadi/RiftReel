@@ -46,6 +46,11 @@ pub struct CaptureConfig {
     pub matches_dir: PathBuf,
     /// Where the encoder probe result is stored.
     pub probe_file: PathBuf,
+    /// No recording starts with less free space than this on the matches' drive (0: no
+    /// limit)...
+    pub min_free_bytes: u64,
+    /// ...and one stops, keeping what it has, when free space falls below this.
+    pub stop_free_bytes: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -56,6 +61,8 @@ pub struct CaptureTimings {
     pub window_wait: Duration,
     /// A first attempt that produced nothing is retried (with a fresh probe) after this.
     pub retry_after: Duration,
+    /// How often a recording looks at the free space left.
+    pub disk_check: Duration,
 }
 
 impl Default for CaptureTimings {
@@ -64,6 +71,7 @@ impl Default for CaptureTimings {
             window_poll: Duration::from_millis(500),
             window_wait: Duration::from_secs(90),
             retry_after: Duration::from_secs(2),
+            disk_check: Duration::from_secs(10),
         }
     }
 }
@@ -154,6 +162,10 @@ pub struct CaptureStatus {
     pub state: CaptureState,
     pub encoder: Option<String>,
     pub error: Option<String>,
+    /// The library drive ran short of space this match: a recording wasn't started, or was
+    /// stopped early. Shown to the user once, after the game.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub low_disk: Option<String>,
 }
 
 /// What a recording needs from the outside world: ffmpeg and Windows in the app, a
@@ -176,6 +188,8 @@ pub trait CaptureBackend: Send + Sync + 'static {
         file: PathBuf,
         audio_lead_s: Option<f64>,
     ) -> BoxFuture<'_, Result<(), String>>;
+    /// Bytes free on the drive `dir` is on, if known.
+    fn free_space(&self, dir: &Path) -> Option<u64>;
 }
 
 /// The real backend: DXGI for the monitor, the ffmpeg sidecar for everything else.
@@ -273,6 +287,10 @@ impl CaptureBackend for FfmpegBackend {
         audio_lead_s: Option<f64>,
     ) -> BoxFuture<'_, Result<(), String>> {
         Box::pin(async move { ffmpeg::remux_to_mp4(self.binary()?, &file, audio_lead_s).await })
+    }
+
+    fn free_space(&self, dir: &Path) -> Option<u64> {
+        crate::disk::free_space(dir)
     }
 }
 
@@ -479,6 +497,8 @@ struct RunOutcome {
     /// It was asked to stop.
     asked: bool,
     discard: bool,
+    /// It was stopped because the drive was nearly full (free bytes then).
+    low_disk: Option<u64>,
 }
 
 /// The recording task.
@@ -492,16 +512,38 @@ struct Recorder {
 
 impl Recorder {
     fn set(&self, state: CaptureState, encoder: Option<&str>, error: Option<String>) {
-        let status = CaptureStatus {
-            state,
-            encoder: encoder.map(str::to_owned),
-            error,
-        };
         self.status.send_if_modified(|current| {
+            let status = CaptureStatus {
+                state,
+                encoder: encoder.map(str::to_owned),
+                error,
+                low_disk: current.low_disk.clone(),
+            };
             let changed = *current != status;
             *current = status;
             changed
         });
+    }
+
+    fn note_low_disk(&self, message: Option<String>) {
+        self.status.send_if_modified(|current| {
+            let changed = current.low_disk != message;
+            current.low_disk = message;
+            changed
+        });
+    }
+
+    /// Why a recording shouldn't start: the matches' drive is short of space.
+    fn short_of_space(&self) -> Option<String> {
+        let wanted = self.config.min_free_bytes;
+        let free = self.backend.free_space(&self.config.matches_dir)?;
+        (wanted > 0 && free < wanted).then(|| {
+            format!(
+                "This match wasn't recorded: only {} free on the library drive (a recording needs {}).",
+                crate::disk::gb(free),
+                crate::disk::gb(wanted)
+            )
+        })
     }
 
     fn wants_out(&self) -> bool {
@@ -509,6 +551,13 @@ impl Recorder {
     }
 
     async fn run(mut self, request: StartRequest) -> Option<Recording> {
+        self.note_low_disk(None);
+        if let Some(message) = self.short_of_space() {
+            tracing::warn!("{message}");
+            self.set(CaptureState::Failed, None, Some(message.clone()));
+            self.note_low_disk(Some(message));
+            return None;
+        }
         self.set(CaptureState::Starting, None, None);
         let Some(monitor) = self.wait_for_display().await else {
             self.set(CaptureState::Idle, None, None);
@@ -649,7 +698,16 @@ impl Recorder {
         );
         self.set(CaptureState::Recording, Some(encoder), None);
 
-        let outcome = self.drive(run).await;
+        let mut outcome = self.drive(run, &folder).await;
+        if let Some(free) = outcome.low_disk {
+            let message = format!(
+                "The recording stopped early: the library drive was almost full ({} free).",
+                crate::disk::gb(free)
+            );
+            tracing::warn!("{message}");
+            outcome.error = Some(message.clone());
+            self.note_low_disk(Some(message));
+        }
         // ffmpeg is done with the pipes.
         let audio = match audio {
             Some(run) => {
@@ -758,7 +816,7 @@ impl Recorder {
     }
 
     /// Follows one ffmpeg run until it exits: progress in, stop or discard out.
-    async fn drive(&mut self, run: CaptureRun) -> RunOutcome {
+    async fn drive(&mut self, run: CaptureRun, folder: &Path) -> RunOutcome {
         let CaptureRun {
             mut progress,
             stop,
@@ -772,6 +830,9 @@ impl Recorder {
         let mut estimate = StartEstimate::new(self.config.fps);
         let mut last = Progress::default();
         let mut lag = LagWatch::default();
+        let mut low_disk = None;
+        let mut disk_check = tokio::time::interval(self.timings.disk_check);
+        disk_check.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
             let take = |command: Command,
                         stop_at: &mut Option<tokio::time::Instant>,
@@ -805,6 +866,16 @@ impl Recorder {
                         stop_at = Some(tokio::time::Instant::now());
                     }
                 }
+                _ = disk_check.tick(), if stop.is_some() && low_disk.is_none() && self.config.stop_free_bytes > 0 => {
+                    if let Some(free) = self.backend.free_space(folder) {
+                        if free < self.config.stop_free_bytes {
+                            // Stop now and keep what there is: a full drive would end it
+                            // worse (and starve the game).
+                            low_disk = Some(free);
+                            stop_at = Some(tokio::time::Instant::now());
+                        }
+                    }
+                }
                 _ = tokio::time::sleep_until(stop_at.unwrap_or_else(tokio::time::Instant::now)), if stop_at.is_some() && stop.is_some() => {
                     if let Some(stop) = stop.take() {
                         let _ = stop.send(());
@@ -831,7 +902,7 @@ impl Recorder {
                         (false, None) => Some("ffmpeg stopped by itself".into()),
                         (_, error) => error,
                     };
-                    return RunOutcome { estimate, last, error, asked, discard };
+                    return RunOutcome { estimate, last, error, asked, discard, low_disk };
                 }
             }
         }
@@ -885,7 +956,7 @@ impl LagWatch {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
     use std::sync::Mutex as StdMutex;
 
     use tokio::sync::{mpsc, oneshot};
@@ -919,6 +990,8 @@ mod tests {
         audio_started: StdMutex<Vec<Vec<SourceConfig>>>,
         audio_stopped: Arc<AtomicUsize>,
         forgotten: AtomicUsize,
+        /// Free space the drive reports (plenty unless a test says).
+        free: AtomicU64,
     }
 
     impl FakeBackend {
@@ -934,6 +1007,7 @@ mod tests {
                 audio_started: StdMutex::new(Vec::new()),
                 audio_stopped: Arc::new(AtomicUsize::new(0)),
                 forgotten: AtomicUsize::new(0),
+                free: AtomicU64::new(u64::MAX),
             })
         }
 
@@ -1039,6 +1113,10 @@ mod tests {
                 Ok(())
             })
         }
+
+        fn free_space(&self, _dir: &Path) -> Option<u64> {
+            Some(self.free.load(Ordering::SeqCst))
+        }
     }
 
     /// A pretend ffmpeg: one report every 5 ms, timestamps from its own start.
@@ -1110,12 +1188,15 @@ mod tests {
             ffmpeg: None,
             matches_dir: dir.join("matches"),
             probe_file: dir.join("capture-probe.json"),
+            min_free_bytes: 20_000_000_000,
+            stop_free_bytes: 2_000_000_000,
         };
         let controller =
             CaptureController::new(config, backend.clone()).with_timings(CaptureTimings {
                 window_poll: Duration::from_millis(5),
                 window_wait: Duration::from_secs(5),
                 retry_after: Duration::from_millis(5),
+                disk_check: Duration::from_millis(5),
             });
         Setup {
             dir,
@@ -1254,6 +1335,7 @@ mod tests {
             window_poll: Duration::from_millis(5),
             window_wait: Duration::from_millis(30),
             retry_after: Duration::from_millis(5),
+            disk_check: Duration::from_millis(5),
         });
         controller.start(request());
         wait_for_frames(&controller).await;
@@ -1412,6 +1494,69 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_nearly_full_drive_means_no_recording() {
+        let Setup {
+            dir,
+            backend,
+            mut controller,
+        } = setup("nospace", FakeBackend::new(vec![]), true);
+        backend.free.store(5_000_000_000, Ordering::SeqCst);
+        assert!(controller.start(request()));
+        wait_for_state(&controller, CaptureState::Failed).await;
+        assert!(controller.finish(true).await.is_none());
+        assert!(
+            backend.plans.lock().unwrap().is_empty(),
+            "ffmpeg never started"
+        );
+        assert!(folders(&dir).is_empty(), "no folder either");
+        let status = controller.status().borrow().clone();
+        let note = status.low_disk.expect("the user is told after the game");
+        assert!(note.contains("5.0 GB free"), "{note}");
+        assert!(note.contains("needs 20.0 GB"), "{note}");
+
+        // Space again: the next match records, and the note is gone.
+        backend.free.store(u64::MAX, Ordering::SeqCst);
+        controller.start(request());
+        wait_for_frames(&controller).await;
+        assert!(controller.finish(true).await.is_some());
+        assert_eq!(controller.status().borrow().low_disk, None);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[tokio::test]
+    async fn a_recording_stops_and_keeps_its_file_when_the_drive_fills_up() {
+        let Setup {
+            dir,
+            backend,
+            mut controller,
+        } = setup("fills", FakeBackend::new(vec![]), true);
+        backend.free.store(30_000_000_000, Ordering::SeqCst);
+        controller.start(request());
+        wait_for_frames(&controller).await;
+        // Down to 1.5 GB: under the 2 GB floor.
+        backend.free.store(1_500_000_000, Ordering::SeqCst);
+        wait_for_state(&controller, CaptureState::Failed).await;
+        let recording = controller
+            .finish(true)
+            .await
+            .expect("what was recorded is kept");
+        let error = recording.info.error.expect("why it ended early");
+        assert!(error.contains("almost full (1.5 GB free)"), "{error}");
+        assert!(recording.info.frames > 0);
+        assert_eq!(
+            backend.finished.lock().unwrap().len(),
+            1,
+            "still made playable"
+        );
+        assert_eq!(folders(&dir).len(), 1);
+        assert_eq!(
+            controller.status().borrow().low_disk.as_deref(),
+            Some(error.as_str())
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[tokio::test]
     async fn turned_off_means_never_recording() {
         let Setup {
             dir,
@@ -1454,12 +1599,15 @@ mod tests {
             ffmpeg: None,
             matches_dir: dir.join("matches"),
             probe_file: dir.join("capture-probe.json"),
+            min_free_bytes: 20_000_000_000,
+            stop_free_bytes: 2_000_000_000,
         };
         let mut controller =
             CaptureController::new(config, backend.clone()).with_timings(CaptureTimings {
                 window_poll: Duration::from_millis(5),
                 window_wait: Duration::from_secs(5),
                 retry_after: Duration::from_millis(5),
+                disk_check: Duration::from_millis(5),
             });
         controller.start(request());
         wait_for_frames(&controller).await;
@@ -1507,12 +1655,15 @@ mod tests {
             ffmpeg: None,
             matches_dir: dir.join("matches"),
             probe_file: dir.join("capture-probe.json"),
+            min_free_bytes: 20_000_000_000,
+            stop_free_bytes: 2_000_000_000,
         };
         let mut controller =
             CaptureController::new(config, backend.clone()).with_timings(CaptureTimings {
                 window_poll: Duration::from_millis(5),
                 window_wait: Duration::from_secs(5),
                 retry_after: Duration::from_millis(5),
+                disk_check: Duration::from_millis(5),
             });
         controller.start(request());
         let second_attempt = async {

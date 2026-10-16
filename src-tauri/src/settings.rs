@@ -32,6 +32,8 @@ const HEADER: &str = "\
 # [capture.audio]: game_only = true records only League's sound instead of everything
 #   the output device plays; devices are matched by part of their name (\"\" = default);
 #   volumes run 0.0 to 4.0. `downplayed-dev audio` lists the devices.
+# [storage]: min_free_gb: no recording starts with less free space than this on the
+#   library's drive; stop_free_gb: a recording stops (keeping what it has) below this.
 # [markers.<type>]: pre_s / post_s are seconds kept before / after the event.
 ";
 
@@ -42,6 +44,7 @@ pub struct Settings {
     pub logging: LoggingSettings,
     pub tracker: TrackerSettings,
     pub capture: CaptureSettings,
+    pub storage: StorageSettings,
     pub ui: UiSettings,
     pub markers: MarkerSettings,
 }
@@ -53,6 +56,7 @@ impl Default for Settings {
             logging: LoggingSettings::default(),
             tracker: TrackerSettings::default(),
             capture: CaptureSettings::default(),
+            storage: StorageSettings::default(),
             ui: UiSettings::default(),
             markers: MarkerSettings::default(),
         }
@@ -231,6 +235,55 @@ impl CaptureSettings {
             self.encoder = AUTO_ENCODER.into();
         }
         warnings.extend(self.audio.validate());
+        warnings
+    }
+}
+
+/// `[storage]` (doc 03 §8).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct StorageSettings {
+    /// No recording starts with less free space than this (GB) on the library's drive.
+    pub min_free_gb: f64,
+    /// A recording stops, keeping what it has, when free space falls below this (GB).
+    pub stop_free_gb: f64,
+}
+
+impl Default for StorageSettings {
+    fn default() -> Self {
+        Self {
+            min_free_gb: 20.0,
+            stop_free_gb: 2.0,
+        }
+    }
+}
+
+impl StorageSettings {
+    fn validate(&mut self) -> Vec<String> {
+        let mut warnings = Vec::new();
+        let defaults = Self::default();
+        for (name, value, default) in [
+            ("min_free_gb", &mut self.min_free_gb, defaults.min_free_gb),
+            (
+                "stop_free_gb",
+                &mut self.stop_free_gb,
+                defaults.stop_free_gb,
+            ),
+        ] {
+            if !(value.is_finite() && *value >= 0.0) {
+                warnings.push(format!(
+                    "storage.{name} = {value} is invalid; using {default}"
+                ));
+                *value = default;
+            }
+        }
+        if self.stop_free_gb > self.min_free_gb {
+            warnings.push(format!(
+                "storage.stop_free_gb = {} is above min_free_gb; using {}",
+                self.stop_free_gb, self.min_free_gb
+            ));
+            self.stop_free_gb = self.min_free_gb;
+        }
         warnings
     }
 }
@@ -491,6 +544,7 @@ impl Settings {
             self.logging.level = level;
         }
         warnings.extend(self.capture.validate());
+        warnings.extend(self.storage.validate());
         warnings
     }
 
@@ -507,6 +561,8 @@ impl Settings {
             ffmpeg: (!path.is_empty()).then(|| PathBuf::from(path)),
             matches_dir: paths.matches_dir.clone(),
             probe_file: paths.capture_probe_file.clone(),
+            min_free_bytes: crate::disk::bytes_of_gb(self.storage.min_free_gb),
+            stop_free_bytes: crate::disk::bytes_of_gb(self.storage.stop_free_gb),
         }
     }
 
@@ -720,6 +776,36 @@ mod tests {
         assert_eq!(settings.capture.fps, 240);
         assert_eq!(settings.capture.bitrate_mbps, 1.0);
         assert_eq!(settings.capture.encoder, "auto");
+    }
+
+    #[test]
+    fn disk_thresholds_reach_the_capture() {
+        let paths = AppPaths::under(PathBuf::from(r"C:\dp"));
+        let config = Settings::default().capture_config(&paths);
+        assert_eq!(
+            (config.min_free_bytes, config.stop_free_bytes),
+            (20_000_000_000, 2_000_000_000)
+        );
+        let mut settings =
+            Settings::from_toml("[storage]\nmin_free_gb = 5\nstop_free_gb = 9\n").unwrap();
+        let warnings = settings.validate();
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+        assert_eq!(
+            settings.storage.stop_free_gb, 5.0,
+            "never above the start threshold"
+        );
+        let mut off =
+            Settings::from_toml("[storage]\nmin_free_gb = 0\nstop_free_gb = 0\n").unwrap();
+        assert!(off.validate().is_empty());
+        let config = off.capture_config(&paths);
+        assert_eq!(
+            (config.min_free_bytes, config.stop_free_bytes),
+            (0, 0),
+            "no limits"
+        );
+        let mut bad = Settings::from_toml("[storage]\nmin_free_gb = -3\n").unwrap();
+        assert_eq!(bad.validate().len(), 1);
+        assert_eq!(bad.storage.min_free_gb, 20.0);
     }
 
     #[test]

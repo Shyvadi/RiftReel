@@ -11,6 +11,11 @@
   let error = $state('');
   /** The match under review, or null for the overview. */
   let openId = $state(null);
+  /** Messages for the user (low disk), shown until dismissed. */
+  let notices = $state([]);
+  const addNotice = (text) => {
+    if (text && !notices.includes(text)) notices.push(text);
+  };
 
   onMount(() => {
     const stops = [];
@@ -18,12 +23,14 @@
       .then((status) => {
         app = status;
         if (status.openMatch) openId = status.openMatch;
+        addNotice(status.notice);
       })
       .catch((e) => (error = String(e)));
     listen('status', (event) => {
       if (app) app.tracker = event.payload;
     }).then((stop) => stops.push(stop));
     listen('open-match', (event) => (openId = event.payload)).then((stop) => stops.push(stop));
+    listen('notice', (event) => addNotice(event.payload)).then((stop) => stops.push(stop));
     return () => stops.forEach((stop) => stop());
   });
 </script>
@@ -37,6 +44,14 @@
   {#if error}
     <p class="error">{error}</p>
   {/if}
+  {#each notices as notice (notice)}
+    <div class="notice" role="status">
+      <span>{notice}</span>
+      <button type="button" aria-label="Dismiss" onclick={() => (notices = notices.filter((n) => n !== notice))}
+        >×</button
+      >
+    </div>
+  {/each}
 
   {#if openId}
     <MatchView id={openId} onBack={() => (openId = null)} />
@@ -159,6 +174,27 @@
   }
   .error {
     color: var(--lose);
+  }
+  .notice {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 14px;
+    margin-bottom: 14px;
+    border: 1px solid var(--warn);
+    border-radius: 10px;
+    background: var(--card);
+  }
+  .notice span {
+    flex: 1;
+  }
+  .notice button {
+    border: 0;
+    background: none;
+    color: var(--muted);
+    font-size: 18px;
+    line-height: 1;
+    cursor: pointer;
   }
   .facts {
     display: flex;

@@ -48,6 +48,8 @@ thiserror = "2"
 # The library's index (`library.db`), a cache of the match folders' sidecars; SQLite is
 # compiled in.
 rusqlite = { version = "0.40.2", features = ["bundled"] }
+# The one message after a game the window can't show (low disk): a Windows notification.
+tauri-plugin-notification = "2.7.0"
 
 # Capture: the monitor League is on (DXGI adapter/output), a job object so ffmpeg never
 # outlives Downplayed, WASAPI audio, and the shell for clip files (Recycle Bin, clipboard,
@@ -63,6 +65,7 @@ windows = { version = "0.62", features = [
     "Win32_Media_KernelStreaming",
     "Win32_Media_Multimedia",
     "Win32_Security",
+    "Win32_Storage_FileSystem",
     "Win32_System_Com",
     "Win32_System_Com_StructuredStorage",
     "Win32_System_DataExchange",
