@@ -17,6 +17,7 @@ pub mod tracker;
 
 mod app;
 mod shell;
+mod startup;
 mod thumbnails;
 mod tray;
 

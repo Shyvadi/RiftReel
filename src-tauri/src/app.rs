@@ -6,7 +6,8 @@
 //! cleanup, when the user has turned it on, runs after each match and every hour, never
 //! during a game.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -23,6 +24,7 @@ use crate::library::{Facets, Library, MatchPage, MatchQuery, Removal};
 use crate::logging;
 use crate::settings::{AppPaths, LoadOutcome, Settings, SettingsError, StorageSettings};
 use crate::shell;
+use crate::startup;
 use crate::thumbnails::Thumbnails;
 use crate::tracker::runtime::{watch_league, Timings, TrackerRuntime, TrackerStatus};
 use crate::tracker::session::MatchSummary;
@@ -50,7 +52,7 @@ const CLEANUP_GAME_CHECK: Duration = Duration::from_secs(2);
 /// `hidden` creates the window invisible at startup, for smoke tests (development).
 const OPEN_WINDOW_ENV: &str = "RIFTREEL_OPEN_WINDOW";
 /// Starts with the tray icon only, no window (say, a start with Windows).
-const TRAY_ARG: &str = "--tray";
+pub(crate) const TRAY_ARG: &str = "--tray";
 /// The app id (`identifier` in tauri.conf.json) an installed copy runs under: its Start
 /// menu shortcut carries it.
 #[cfg(windows)]
@@ -75,6 +77,8 @@ struct AppState {
     settings_writable: bool,
     /// Wakes the cleanup: a match was saved, or the user turned it on.
     cleanup_wake: Notify,
+    /// `[startup] with_windows` as it is now: the window can change it.
+    start_with_windows: AtomicBool,
 }
 
 impl AppState {
@@ -84,6 +88,31 @@ impl AppState {
             .unwrap_or_else(PoisonError::into_inner)
             .clone()
     }
+
+    /// The window may change settings only if the settings file was usable at startup.
+    fn settings_editable(&self) -> Result<(), String> {
+        if self.settings_writable {
+            return Ok(());
+        }
+        Err(format!(
+            "{} couldn't be read when RiftReel started; fix it (or remove it for the defaults), then restart RiftReel.",
+            self.paths.settings_file.display()
+        ))
+    }
+}
+
+/// Changes `settings.toml` as it is now (not as it was at startup), keeping the rest.
+fn edit_settings_file(path: &Path, change: impl FnOnce(&mut Settings)) -> Result<(), String> {
+    let mut file = match Settings::load(path) {
+        Ok(file) => file,
+        Err(SettingsError::Io { source, .. }) if source.kind() == std::io::ErrorKind::NotFound => {
+            Settings::default()
+        }
+        Err(e) => return Err(format!("{e}; fix it, then try again")),
+    };
+    change(&mut file);
+    file.save(path)
+        .map_err(|e| format!("could not save {}: {e}", path.display()))
 }
 
 #[derive(Serialize)]
@@ -422,6 +451,8 @@ struct StorageOverview {
     /// Outplayed libraries imported, and where one probably is.
     imports: Vec<Import>,
     outplayed_folder: Option<PathBuf>,
+    /// Windows starts RiftReel in the tray when the user signs in.
+    start_with_windows: bool,
 }
 
 /// The storage view: what the library takes, the cleanup's settings, what it left for
@@ -461,6 +492,7 @@ async fn storage_overview(
         cleanup,
         imports,
         outplayed_folder,
+        start_with_windows: state.start_with_windows.load(Ordering::Relaxed),
     })
 }
 
@@ -570,12 +602,7 @@ async fn set_cleanup(
     settings: CleanupSettings,
     state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
-    if !state.settings_writable {
-        return Err(format!(
-            "{} couldn't be read when RiftReel started; fix it (or remove it for the defaults), then restart RiftReel.",
-            state.paths.settings_file.display()
-        ));
-    }
+    state.settings_editable()?;
     let before = state.storage();
     let mut storage = before.clone();
     settings.apply(&mut storage);
@@ -585,18 +612,7 @@ async fn set_cleanup(
     }
     let path = state.paths.settings_file.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let mut file = match Settings::load(&path) {
-            Ok(file) => file,
-            Err(SettingsError::Io { source, .. })
-                if source.kind() == std::io::ErrorKind::NotFound =>
-            {
-                Settings::default()
-            }
-            Err(e) => return Err(format!("{e}; fix it, then try again")),
-        };
-        settings.apply(&mut file.storage);
-        file.save(&path)
-            .map_err(|e| format!("could not save {}: {e}", path.display()))
+        edit_settings_file(&path, |file| settings.apply(&mut file.storage))
     })
     .await
     .map_err(|e| e.to_string())??;
@@ -611,6 +627,28 @@ async fn set_cleanup(
     if settings.cleanup && !before.cleanup {
         state.cleanup_wake.notify_one();
     }
+    Ok(())
+}
+
+/// Saves `[startup] with_windows` in `settings.toml`, and puts RiftReel on Windows'
+/// startup list (in the tray) or takes it off.
+#[tauri::command]
+async fn set_start_with_windows(
+    enabled: bool,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    state.settings_editable()?;
+    let path = state.paths.settings_file.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let exe = startup::this_exe().map_err(|e| e.to_string())?;
+        startup::set(enabled, &exe)
+            .map_err(|e| format!("could not change Windows' startup apps: {e}"))?;
+        edit_settings_file(&path, |file| file.startup.with_windows = enabled)
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+    state.start_with_windows.store(enabled, Ordering::Relaxed);
+    tracing::info!(enabled, "start with Windows set");
     Ok(())
 }
 
@@ -671,6 +709,10 @@ pub fn run() {
     set_app_id();
     let settings_writable = !matches!(loaded.outcome, LoadOutcome::Invalid(_));
     let settings = loaded.settings;
+    #[cfg(windows)]
+    if settings_writable {
+        sync_start_with_windows(settings.startup.with_windows);
+    }
     if settings.storage.cleanup {
         tracing::info!(
             keep_days = settings.storage.keep_days,
@@ -712,6 +754,7 @@ pub fn run() {
             storage: Mutex::new(settings.storage.clone()),
             settings_writable,
             cleanup_wake: Notify::new(),
+            start_with_windows: AtomicBool::new(settings.startup.with_windows),
         })
         .invoke_handler(tauri::generate_handler![
             get_status,
@@ -729,6 +772,7 @@ pub fn run() {
             reveal_video,
             storage_overview,
             set_cleanup,
+            set_start_with_windows,
             run_cleanup,
             retry_cleanup,
             outplayed_survey,
@@ -868,19 +912,46 @@ fn set_app_id() {
     use windows::core::HSTRING;
     use windows::Win32::UI::Shell::SetCurrentProcessExplicitAppUserModelID;
 
-    let built_here = std::env::current_exe()
-        .ok()
-        .and_then(|exe| exe.parent().map(|dir| dir.to_path_buf()))
-        .is_none_or(|dir| {
-            dir.ends_with(std::path::Path::new("target").join("debug"))
-                || dir.ends_with(std::path::Path::new("target").join("release"))
-        });
-    if built_here {
+    if built_here() {
         return;
     }
     // SAFETY: a valid string, set before any window exists.
     if let Err(error) = unsafe { SetCurrentProcessExplicitAppUserModelID(&HSTRING::from(APP_ID)) } {
         tracing::warn!(%error, "could not set the app id");
+    }
+}
+
+/// Whether this exe runs from cargo's `target\debug` or `target\release`: a build, not an
+/// installed copy.
+#[cfg(windows)]
+fn built_here() -> bool {
+    std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(|dir| dir.to_path_buf()))
+        .is_none_or(|dir| {
+            dir.ends_with(Path::new("target").join("debug"))
+                || dir.ends_with(Path::new("target").join("release"))
+        })
+}
+
+/// An installed copy keeps Windows' startup apps in step with `[startup] with_windows`:
+/// the file may have been edited by hand, or RiftReel moved. A build run from cargo's
+/// `target` folder, or under a development home, leaves them alone.
+#[cfg(windows)]
+fn sync_start_with_windows(enabled: bool) {
+    if built_here() || AppPaths::development_home().is_some() {
+        return;
+    }
+    let Ok(exe) = startup::this_exe() else {
+        return;
+    };
+    let wanted = enabled.then(|| startup::command(&exe));
+    if startup::registered().ok().as_ref() == Some(&wanted) {
+        return;
+    }
+    match startup::set(enabled, &exe) {
+        Ok(()) => tracing::info!(enabled, "Windows' startup apps updated"),
+        Err(error) => tracing::warn!(%error, "could not update Windows' startup apps"),
     }
 }
 

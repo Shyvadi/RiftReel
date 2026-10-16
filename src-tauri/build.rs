@@ -17,6 +17,7 @@ fn main() {
         "reveal_video",
         "storage_overview",
         "set_cleanup",
+        "set_start_with_windows",
         "run_cleanup",
         "retry_cleanup",
         "outplayed_survey",

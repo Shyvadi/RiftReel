@@ -38,6 +38,8 @@ const HEADER: &str = "\
 #   cleanup = true sends full-match videos older than keep_days, then the oldest while
 #   they take more than full_matches_gb, to the Recycle Bin (0 = no limit). Clips and
 #   favorites are never removed; clips_warn_gb only warns.
+# [startup]: with_windows = true starts RiftReel in the tray when you sign in to
+#   Windows (the Storage view turns it on and off too).
 # [markers.<type>]: pre_s / post_s are seconds kept before / after the event.
 ";
 
@@ -50,6 +52,7 @@ pub struct Settings {
     pub capture: CaptureSettings,
     pub storage: StorageSettings,
     pub ui: UiSettings,
+    pub startup: StartupSettings,
     pub markers: MarkerSettings,
 }
 
@@ -62,6 +65,7 @@ impl Default for Settings {
             capture: CaptureSettings::default(),
             storage: StorageSettings::default(),
             ui: UiSettings::default(),
+            startup: StartupSettings::default(),
             markers: MarkerSettings::default(),
         }
     }
@@ -336,6 +340,13 @@ impl Default for UiSettings {
             open_review_after_game: true,
         }
     }
+}
+
+/// `[startup]`: whether Windows starts RiftReel (in the tray) when the user signs in.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct StartupSettings {
+    pub with_windows: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -747,6 +758,14 @@ mod tests {
         assert!(Settings::default().to_toml().contains("[ui]"));
         let settings = Settings::from_toml("[ui]\nopen_review_after_game = false\n").unwrap();
         assert!(!settings.ui.open_review_after_game);
+    }
+
+    #[test]
+    fn starting_with_windows_is_off_until_turned_on() {
+        assert!(!Settings::default().startup.with_windows);
+        assert!(Settings::default().to_toml().contains("[startup]\nwith_windows = false"));
+        let settings = Settings::from_toml("[startup]\nwith_windows = true\n").unwrap();
+        assert!(settings.startup.with_windows);
     }
 
     #[test]

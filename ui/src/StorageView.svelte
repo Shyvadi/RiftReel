@@ -114,6 +114,21 @@
     }
   }
 
+  /** Puts RiftReel on Windows' startup apps (in the tray), or takes it off. */
+  async function setStartWithWindows(enabled) {
+    if (busy) return;
+    busy = true;
+    message = '';
+    try {
+      await invoke('set_start_with_windows', { enabled });
+      await load();
+    } catch (e) {
+      error = String(e);
+    } finally {
+      busy = false;
+    }
+  }
+
   /** Turning it on removes what the dry run lists: confirm first, unless that's nothing. */
   function turnOn() {
     if (plan?.removals.length) confirming = true;
@@ -433,6 +448,26 @@
       {/if}
     {/if}
     {#if imported}<p class="done">{imported}</p>{/if}
+  </section>
+
+  <section class="card">
+    <div class="card-head">
+      <h2>Start with Windows</h2>
+      <span class="state" class:on={overview.startWithWindows}>{overview.startWithWindows ? 'On' : 'Off'}</span>
+    </div>
+    <p class="lead muted">
+      Starts RiftReel in the tray when you sign in, so your games are recorded without opening it first.
+    </p>
+    <div class="actions">
+      <button
+        type="button"
+        class="btn"
+        disabled={busy || !overview.settingsWritable}
+        onclick={() => setStartWithWindows(!overview.startWithWindows)}
+      >
+        {overview.startWithWindows ? 'Turn off' : 'Turn on'}
+      </button>
+    </div>
   </section>
 
   <section class="card">

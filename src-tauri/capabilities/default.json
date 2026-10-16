@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "The main window may read the tracker status and the match library, ask for match thumbnails, cut a clip out of a saved match's recording, mark a clip as a favorite, show a clip in Explorer, send a clip to the Recycle Bin, copy a clip to the clipboard, save a copy of a clip where the user picks, mark a match as a favorite, show a match's video in Explorer, see the storage and the cleanup's dry run, change the cleanup's settings, run it, let it retry a video, look at an Outplayed library and import it by reference, let the cleanup remove an import's videos, and receive updates. Nothing else.",
+  "description": "The main window may read the tracker status and the match library, ask for match thumbnails, cut a clip out of a saved match's recording, mark a clip as a favorite, show a clip in Explorer, send a clip to the Recycle Bin, copy a clip to the clipboard, save a copy of a clip where the user picks, mark a match as a favorite, show a match's video in Explorer, see the storage and the cleanup's dry run, change the cleanup's settings, run it, let it retry a video, turn starting with Windows on or off, look at an Outplayed library and import it by reference, let the cleanup remove an import's videos, and receive updates. Nothing else.",
   "windows": ["main"],
   "permissions": [
     "core:event:allow-listen",
@@ -21,6 +21,7 @@
     "allow-reveal-video",
     "allow-storage-overview",
     "allow-set-cleanup",
+    "allow-set-start-with-windows",
     "allow-run-cleanup",
     "allow-retry-cleanup",
     "allow-outplayed-survey",

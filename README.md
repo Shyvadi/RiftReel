@@ -155,6 +155,12 @@ go to the Recycle Bin, then the oldest while full matches take more than
 deleted: it stays, flagged in Storage.
 `riftreel-dev cleanup` prints what the cleanup would do now.
 
+Starting with Windows is off until turned on (`[startup] with_windows`, or **Start with
+Windows** in the Storage view). Then RiftReel is one of Windows' startup apps and starts
+in the tray when you sign in, so games are recorded without opening it first. An
+installed copy keeps that entry pointing at itself each time it starts. A build run from
+cargo's `target` folder, or under `RIFTREEL_HOME`, never touches it.
+
 ## Layout
 
 ```
@@ -175,6 +181,7 @@ src-tauri/src/
   thumbnails.rs              list thumbnails, made in the background (never in game)
   shell.rs                   Recycle Bin (never deleting outright), clipboard, Save as,
                              Explorer
+  startup.rs                 starting with Windows (a value under the user's Run key)
   replay.rs, bin/            fixture replay and the riftreel-dev tool
 src-tauri/tests/             fake HTTPS Live Client API + fake LCU, end-to-end runtime tests
 fixtures/lol/                synthetic Live Client / LCU fixtures and expected replay output
