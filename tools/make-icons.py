@@ -1,13 +1,13 @@
 """Draws RiftReel's icon set into src-tauri/icons (original artwork).
 
-The mark: a bold white R on a rounded tile that runs from teal to blue, the same at
+The mark: a bold black R on a rounded tile that runs from red to dark red, the same at
 every size, the tray icon (tray.png) included. It is constructed, not drawn by hand: a
 stem, a bowl between two concentric half circles, and a straight leg.
 
 The mark is built here as SVG paths (one per shape, each filled even-odd), which this
-script also writes to src-tauri/icons/source.svg and to ui/src/lib/mark.js for the
-window's logo, so all three match. The PNG and ICO sizes are drawn from those paths at
-4x and scaled down, so edges stay clean.
+script also writes, with its colours, to src-tauri/icons/source.svg and to
+ui/src/lib/mark.js for the window's logo, so all three match. The PNG and ICO sizes are
+drawn from those paths at 4x and scaled down, so edges stay clean.
 
 usage: python tools/make-icons.py   (needs Pillow)
 """
@@ -24,8 +24,11 @@ ICONS = ROOT / "src-tauri" / "icons"
 UI_MARK = ROOT / "ui" / "src" / "lib" / "mark.js"
 SIZE = 1024
 SUPER = 4
-TEAL = (20, 184, 166)
-BLUE = (37, 99, 235)
+# The tile runs from TILE_TOP (top left) to TILE_BOTTOM (bottom right); the R is INK,
+# with a soft SHADOW under it.
+TILE_TOP, TILE_BOTTOM = (239, 68, 68), (127, 29, 29)
+INK = (16, 16, 18)
+SHADOW, SHADOW_OPACITY = (60, 0, 0), 0.3
 
 # The R, centred on the 1024 grid: its height, width and stroke, the bowl's height, the
 # leg's width, how far the leg reaches past the bowl, and the gap between the stem and
@@ -37,6 +40,10 @@ R_LEG, R_REACH, R_NOTCH = 136, 36, 38
 
 def num(value):
     return f"{value:.1f}".rstrip("0").rstrip(".")
+
+
+def hex_colour(rgb):
+    return "#{:02x}{:02x}{:02x}".format(*rgb)
 
 
 def xy(point):
@@ -122,11 +129,11 @@ def draw(paths, scale):
 
 
 def tile(scale):
-    """The rounded teal-to-blue tile, as RGBA at SIZE * scale."""
+    """The rounded tile, as RGBA at SIZE * scale."""
     n = SIZE * scale
     down = Image.linear_gradient("L").resize((n, n), Image.Resampling.BILINEAR)
     diagonal = ImageChops.add(down, down.transpose(Image.Transpose.TRANSPOSE), scale=2)
-    image = ImageOps.colorize(diagonal, black=TEAL, white=BLUE).convert("RGBA")
+    image = ImageOps.colorize(diagonal, black=TILE_TOP, white=TILE_BOTTOM).convert("RGBA")
     mask = Image.new("L", (n, n), 0)
     margin = 48 * scale
     ImageDraw.Draw(mask).rounded_rectangle(
@@ -137,17 +144,19 @@ def tile(scale):
 
 
 def compose(glyph):
-    """The tile with a white glyph and its soft shadow, at SIZE * SUPER."""
+    """The tile with the glyph in INK and its soft shadow, at SIZE * SUPER."""
     base = tile(SUPER)
-    shadow = Image.new("RGBA", base.size, (8, 24, 48, 0))
-    shadow.putalpha(glyph.point(lambda v: int(v * 0.35)).filter(ImageFilter.GaussianBlur(14 * SUPER)))
+    shadow = Image.new("RGBA", base.size, SHADOW + (0,))
+    shadow.putalpha(
+        glyph.point(lambda v: int(v * SHADOW_OPACITY)).filter(ImageFilter.GaussianBlur(14 * SUPER))
+    )
     shadow = ImageChops.offset(shadow, 0, 12 * SUPER)
     tile_alpha = base.getchannel("A")
     shadow.putalpha(ImageChops.multiply(shadow.getchannel("A"), tile_alpha))
     base = Image.alpha_composite(base, shadow)
-    white = Image.new("RGBA", base.size, (255, 255, 255, 0))
-    white.putalpha(glyph)
-    return Image.alpha_composite(base, white)
+    ink = Image.new("RGBA", base.size, INK + (0,))
+    ink.putalpha(glyph)
+    return Image.alpha_composite(base, ink)
 
 
 MARK = mark()
@@ -184,15 +193,15 @@ def write_svg(path):
   <!-- RiftReel's mark (original artwork), written by tools/make-icons.py: edit it there. -->
   <defs>
     <linearGradient id="tile" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#14b8a6"/>
-      <stop offset="1" stop-color="#2563eb"/>
+      <stop offset="0" stop-color="{hex_colour(TILE_TOP)}"/>
+      <stop offset="1" stop-color="{hex_colour(TILE_BOTTOM)}"/>
     </linearGradient>
     <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
-      <feDropShadow dx="0" dy="12" stdDeviation="14" flood-color="#081830" flood-opacity="0.35"/>
+      <feDropShadow dx="0" dy="12" stdDeviation="14" flood-color="{hex_colour(SHADOW)}" flood-opacity="{SHADOW_OPACITY}"/>
     </filter>
   </defs>
   <rect x="48" y="48" width="928" height="928" rx="208" fill="url(#tile)"/>
-  <g fill="#fff" fill-rule="evenodd" filter="url(#shadow)">
+  <g fill="{hex_colour(INK)}" fill-rule="evenodd" filter="url(#shadow)">
 {paths}
   </g>
 </svg>
@@ -204,8 +213,11 @@ def write_svg(path):
 def write_ui_mark(path):
     paths = "\n".join(f"  '{d}'," for d in MARK)
     path.write_text(
-        "// RiftReel's mark on the 1024 grid: white paths, each filled even-odd, on the\n"
-        "// teal-to-blue tile. Written by tools/make-icons.py: edit it there.\n"
+        "// RiftReel's mark on the 1024 grid: paths in INK, each filled even-odd, on a tile\n"
+        "// running from TILE[0] (top left) to TILE[1]. Written by tools/make-icons.py: edit\n"
+        "// it there.\n"
+        f"export const TILE = ['{hex_colour(TILE_TOP)}', '{hex_colour(TILE_BOTTOM)}'];\n"
+        f"export const INK = '{hex_colour(INK)}';\n"
         f"export const MARK = [\n{paths}\n];\n",
         newline="\n",
     )
