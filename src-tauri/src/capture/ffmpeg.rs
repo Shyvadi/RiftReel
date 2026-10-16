@@ -674,7 +674,12 @@ pub async fn cut_clip(
         let _ = tokio::fs::remove_file(&clip).await;
         return Err(exit.detail.unwrap_or_else(|| "ffmpeg failed".into()));
     }
-    let frame = clips::thumbnail_args(video, plan.thumbnail_at_s, &thumbnail);
+    let frame = clips::thumbnail_args(
+        video,
+        plan.thumbnail_at_s,
+        clips::CLIP_THUMBNAIL_WIDTH,
+        &thumbnail,
+    );
     match run_to_end(
         ffmpeg,
         &frame,
@@ -689,6 +694,36 @@ pub async fn cut_clip(
             Ok(false)
         }
     }
+}
+
+/// One frame of `video` at `at_s` as a JPEG `width` pixels wide, at low priority.
+pub async fn make_thumbnail(
+    ffmpeg: &Path,
+    video: &Path,
+    at_s: f64,
+    width: u32,
+    out: &Path,
+) -> Result<(), String> {
+    if let Some(dir) = out.parent() {
+        tokio::fs::create_dir_all(dir)
+            .await
+            .map_err(|e| e.to_string())?;
+    }
+    let frame = clips::thumbnail_args(video, at_s, width, out);
+    let outcome = run_to_end(
+        ffmpeg,
+        &frame,
+        Priority::BelowNormal,
+        Duration::from_secs(30),
+    )
+    .await;
+    let error = match outcome {
+        Ok((exit, _)) if exit.success => return Ok(()),
+        Ok((exit, _)) => exit.detail.unwrap_or_else(|| "ffmpeg failed".into()),
+        Err(e) => e.to_string(),
+    };
+    let _ = tokio::fs::remove_file(out).await;
+    Err(error)
 }
 
 async fn replace(temp: &Path, file: &Path) -> Result<(), String> {

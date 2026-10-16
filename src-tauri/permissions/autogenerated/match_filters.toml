@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-match-filters"
+description = "Enables the match_filters command without any pre-configured scope."
+commands.allow = ["match_filters"]
+
+[[permission]]
+identifier = "deny-match-filters"
+description = "Denies the match_filters command without any pre-configured scope."
+commands.deny = ["match_filters"]

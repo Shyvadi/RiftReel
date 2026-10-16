@@ -7,37 +7,49 @@
 //! A recorded match's folder is created when recording starts, named from what is known
 //! then (`<date>_<time>[_<queue>]`), and renamed to the full name when the match is
 //! saved. Clips are added to it later, from the review (`plan_clip`, `add_clip`).
+//!
+//! The list comes from an index of the folders (`index`, `library.db` in the library's
+//! root): the sidecars are the truth, the index a cache kept in step with them.
 
+mod index;
+
+use std::collections::HashSet;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::sync::{Mutex, PoisonError};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
 use serde_json::{Map, Value};
+
+use index::{ClipEntry, Entry, Index, Row, Stamp};
+pub use index::{Facets, MatchQuery, Opened, Sort, Source};
 
 use crate::capture::clips::{
     clip_label, plan_span, Clip, ClipPlan, CLIPS_DIR, KEYFRAME_S, THUMBS_DIR,
 };
 use crate::recorder::utc_parts;
 use crate::replay::{replay_with, Fixture, LcuRecording};
+use crate::tracker::normalize::MarkerLabel;
 use crate::tracker::session::{MatchSummary, SessionConfig};
 
 pub const MATCH_FILE: &str = "match.json";
 pub const MATCH_SCHEMA: u32 = 1;
 /// The full-match video in a match folder.
 pub const VIDEO_FILE: &str = "match.mp4";
+/// A match's picture in the list, inside its folder.
+pub const MATCH_THUMBNAIL: &str = "thumbs/match.jpg";
+const MATCH_THUMBNAIL_NAME: &str = "match.jpg";
+/// The index, in the library's root (beside the matches folder).
+pub const INDEX_FILE: &str = "library.db";
 
 /// Recordings are addressed as `recording:<file stem>`.
 const RECORDING_PREFIX: &str = "recording:";
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Source {
-    /// Tracked live by Downplayed.
-    Game,
-    /// A fixture recorded by `downplayed-dev record`.
-    Recording,
-}
+/// What recordings were replayed with: replayed again when the marker settings change.
+const RECORDINGS_CONFIG_KEY: &str = "recordings_config";
+/// The list's first page looks at the folders again (for changes made outside
+/// Downplayed) when the last look is older than this.
+const QUERY_SYNC_AGE: Duration = Duration::from_secs(10);
 
 /// One row of the match list.
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -56,8 +68,37 @@ pub struct MatchCard {
     pub assists: Option<u64>,
     pub duration_s: Option<f64>,
     pub moments: usize,
+    /// Double kills or better.
+    pub multikills: usize,
+    pub clips: usize,
+    pub favorite_clips: usize,
     /// The match was recorded (`match.mp4` is there).
     pub video: bool,
+    /// Its picture, a full path for the asset protocol, once made.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thumbnail_path: Option<String>,
+}
+
+/// A page of the list.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MatchPage {
+    /// How many matches pass the filters, in all.
+    pub total: u64,
+    pub offset: u32,
+    pub items: Vec<MatchCard>,
+}
+
+/// What a sync of the index did.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SyncReport {
+    /// Sidecars read (new or changed).
+    pub read: usize,
+    /// Entries dropped (their folder or recording is gone).
+    pub removed: usize,
+    /// Entries in the index afterwards.
+    pub total: u64,
+    pub elapsed: Duration,
 }
 
 #[derive(Serialize)]
@@ -77,21 +118,56 @@ pub struct ClipJob {
     pub plan: ClipPlan,
 }
 
-#[derive(Debug, Clone)]
+/// A match's thumbnail to make: one frame of its video.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ThumbnailJob {
+    pub video: PathBuf,
+    pub at_s: f64,
+    pub out: PathBuf,
+}
+
+/// A clip moved out of a match (to the Recycle Bin).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Removal {
+    Removed,
+    /// The recycling was cancelled or refused: nothing changed.
+    Kept,
+}
+
 pub struct Library {
     matches_dir: PathBuf,
     recordings_dir: PathBuf,
     /// How recordings are replayed (the user's marker settings).
     config: SessionConfig,
+    index: Index,
+    /// Syncs go one at a time; when the last one finished.
+    synced: Mutex<Option<Instant>>,
 }
 
 impl Library {
+    /// The library of `matches_dir`, its index in the folder above (the library's root).
     pub fn new(matches_dir: PathBuf, recordings_dir: PathBuf, config: SessionConfig) -> Self {
+        let index = match matches_dir.parent() {
+            Some(root) if !root.as_os_str().is_empty() => Index::open(&root.join(INDEX_FILE)),
+            _ => Index::in_memory(),
+        };
         Self {
             matches_dir,
             recordings_dir,
             config,
+            index,
+            synced: Mutex::new(None),
         }
+    }
+
+    /// How the index came up: kept, made anew, or (unusable file) in memory.
+    pub fn index_opened(&self) -> Opened {
+        self.index.opened()
+    }
+
+    /// The index file, unless it lives in memory.
+    pub fn index_path(&self) -> Option<&Path> {
+        self.index.path()
     }
 
     /// Saves a finished match as `<date>_<time>_<queue>_<champion>/match.json` (UTC) and
@@ -123,45 +199,197 @@ impl Library {
             summary,
         };
         write_json(&dir.join(MATCH_FILE), &file)?;
+        self.refresh(&id);
         Ok(id)
     }
 
-    /// Every saved match and recording, newest first. Unreadable entries are skipped.
+    /// Brings the index up to date with the folders: reads the sidecars that are new or
+    /// changed since it last looked, replays recordings that changed (all of them if the
+    /// marker settings did), and drops what is gone. With nothing changed it costs a
+    /// directory listing and two stats per match.
+    pub fn sync(&self) -> SyncReport {
+        let mut synced = self.synced.lock().unwrap_or_else(PoisonError::into_inner);
+        let report = self.sync_now();
+        *synced = Some(Instant::now());
+        report
+    }
+
+    /// Syncs unless one finished less than `age` ago (or is running: this waits for it).
+    fn sync_if_older(&self, age: Duration) {
+        let mut synced = self.synced.lock().unwrap_or_else(PoisonError::into_inner);
+        if synced.is_some_and(|at| at.elapsed() < age) {
+            return;
+        }
+        self.sync_now();
+        *synced = Some(Instant::now());
+    }
+
+    fn sync_now(&self) -> SyncReport {
+        let started = Instant::now();
+        let mut entries = Vec::new();
+        let mut removed = Vec::new();
+
+        let indexed = self.index.stamps(Source::Game).unwrap_or_default();
+        let mut seen = HashSet::new();
+        for dir in read_dir(&self.matches_dir) {
+            let Some(id) = dir.file_name().and_then(|n| n.to_str()).map(str::to_owned) else {
+                continue;
+            };
+            let Some(stamp) = folder_stamp(&dir) else {
+                continue;
+            };
+            if indexed.get(&id) == Some(&stamp) {
+                seen.insert(id);
+                continue;
+            }
+            match read_json(&dir.join(MATCH_FILE)) {
+                Some(summary) => {
+                    seen.insert(id.clone());
+                    entries.push(game_entry(&id, &dir, &summary, stamp));
+                }
+                None => tracing::debug!(%id, "unreadable match.json; not listed"),
+            }
+        }
+        removed.extend(indexed.into_keys().filter(|id| !seen.contains(id)));
+
+        let config = format!("{:?}", self.config);
+        let same_config = self
+            .index
+            .meta(RECORDINGS_CONFIG_KEY)
+            .ok()
+            .flatten()
+            .as_deref()
+            == Some(&config);
+        let indexed = self.index.stamps(Source::Recording).unwrap_or_default();
+        let mut seen = HashSet::new();
+        for path in read_dir(&self.recordings_dir) {
+            if path.extension().and_then(|e| e.to_str()) != Some("json") {
+                continue;
+            }
+            let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
+                continue;
+            };
+            let id = format!("{RECORDING_PREFIX}{stem}");
+            let Some(stamp) = file_stamp(&path) else {
+                continue;
+            };
+            if same_config && indexed.get(&id) == Some(&stamp) {
+                seen.insert(id);
+                continue;
+            }
+            if let Some(summary) = self.replay_recording(&path) {
+                seen.insert(id.clone());
+                entries.push(recording_entry(&id, &summary, stamp));
+            }
+        }
+        removed.extend(indexed.into_keys().filter(|id| !seen.contains(id)));
+
+        let mut report = SyncReport {
+            read: entries.len(),
+            removed: removed.len(),
+            ..SyncReport::default()
+        };
+        if !entries.is_empty() || !removed.is_empty() {
+            if let Err(error) = self.index.apply(&entries, &removed) {
+                tracing::warn!(%error, "could not update the library index");
+            }
+        }
+        if !same_config {
+            let _ = self.index.set_meta(RECORDINGS_CONFIG_KEY, &config);
+        }
+        report.total = self.index.len().unwrap_or_default();
+        report.elapsed = started.elapsed();
+        report
+    }
+
+    /// Re-reads one match folder into the index (or drops it, if it's gone).
+    fn refresh(&self, id: &str) {
+        let Some(name) = safe_name(id) else {
+            return;
+        };
+        let dir = self.matches_dir.join(name);
+        let entry = folder_stamp(&dir).and_then(|stamp| {
+            read_json(&dir.join(MATCH_FILE)).map(|summary| game_entry(id, &dir, &summary, stamp))
+        });
+        let result = match entry {
+            Some(entry) => self.index.apply(&[entry], &[]),
+            None => self.index.apply(&[], &[id.to_owned()]),
+        };
+        if let Err(error) = result {
+            tracing::warn!(%error, "could not update the library index");
+        }
+    }
+
+    /// A page of matches and recordings, filtered and sorted. The first page brings the
+    /// index up to date first, unless that was done a moment ago.
+    pub fn query(&self, query: &MatchQuery) -> io::Result<MatchPage> {
+        if query.offset == 0 {
+            self.sync_if_older(QUERY_SYNC_AGE);
+        }
+        let (total, rows) = self.index.query(query).map_err(io::Error::other)?;
+        Ok(MatchPage {
+            total,
+            offset: query.offset,
+            items: rows.into_iter().map(|row| self.card(row)).collect(),
+        })
+    }
+
+    /// The champions and queues the filters can offer.
+    pub fn facets(&self) -> io::Result<Facets> {
+        self.index.facets().map_err(io::Error::other)
+    }
+
+    /// Every saved match and recording, newest first.
     pub fn list(&self) -> Vec<MatchCard> {
         let mut cards = Vec::new();
-        for entry in read_dir(&self.matches_dir) {
-            let Some(id) = entry
-                .file_name()
-                .and_then(|n| n.to_str())
-                .map(str::to_owned)
-            else {
-                continue;
+        loop {
+            let query = MatchQuery {
+                offset: u32::try_from(cards.len()).unwrap_or(u32::MAX),
+                limit: 500,
+                ..MatchQuery::default()
             };
-            if let Some(summary) = read_json(&entry.join(MATCH_FILE)) {
-                let when = summary["startedWallMs"].as_u64().unwrap_or_default();
-                let mut card = card(id, Source::Game, when, &summary);
-                card.video = video_path(&entry, &summary).is_some();
-                cards.push(card);
+            match self.query(&query) {
+                Ok(page) if !page.items.is_empty() => {
+                    let total = page.total;
+                    cards.extend(page.items);
+                    if cards.len() as u64 >= total {
+                        break;
+                    }
+                }
+                _ => break,
             }
         }
-        for entry in read_dir(&self.recordings_dir) {
-            if entry.extension().and_then(|e| e.to_str()) != Some("json") {
-                continue;
-            }
-            let Some(stem) = entry.file_stem().and_then(|s| s.to_str()) else {
-                continue;
-            };
-            if let Some(summary) = self.replay_recording(&entry) {
-                cards.push(card(
-                    format!("{RECORDING_PREFIX}{stem}"),
-                    Source::Recording,
-                    modified_ms(&entry),
-                    &summary,
-                ));
-            }
-        }
-        cards.sort_by(|a, b| b.when_ms.cmp(&a.when_ms));
         cards
+    }
+
+    fn card(&self, row: Row) -> MatchCard {
+        let count = |n: i64| usize::try_from(n).unwrap_or_default();
+        let number = |n: Option<i64>| n.and_then(|n| u64::try_from(n).ok());
+        let thumbnail_path = row
+            .thumbnail
+            .as_deref()
+            .filter(|_| row.source == Source::Game)
+            .and_then(|file| member_file(&self.matches_dir.join(&row.id), THUMBS_DIR, file))
+            .map(|path| path.display().to_string());
+        MatchCard {
+            source: row.source,
+            when_ms: u64::try_from(row.when_ms).unwrap_or_default(),
+            champion: row.champion,
+            queue: row.queue,
+            game_mode: row.game_mode,
+            result: row.result,
+            kills: number(row.kills),
+            deaths: number(row.deaths),
+            assists: number(row.assists),
+            duration_s: row.duration_s,
+            moments: count(row.moments),
+            multikills: count(row.multikills),
+            clips: count(row.clips),
+            favorite_clips: count(row.favorite_clips),
+            video: row.video,
+            thumbnail_path,
+            id: row.id,
+        }
     }
 
     /// A match or recording as the window reviews it: the summary's fields plus `id`,
@@ -257,11 +485,83 @@ impl Library {
             }
         }
         write_json(&path, &summary)?;
+        self.refresh(id);
         let mut shown = entry;
         if let Some(fields) = shown.as_object_mut() {
             add_paths(&dir, fields);
         }
         Ok(shown)
+    }
+
+    /// Takes a clip out of a saved match: its file and thumbnail go to `recycle` (the
+    /// Recycle Bin in the app; nothing is ever deleted outright), then it leaves the
+    /// match's `clips` and the index. If `recycle` declines (cancelled, or the files
+    /// can't be recycled) nothing changes. A clip whose files are already gone is just
+    /// taken off the list.
+    pub fn remove_clip(
+        &self,
+        id: &str,
+        file: &str,
+        recycle: impl FnOnce(&[PathBuf]) -> Result<bool, String>,
+    ) -> Result<Removal, String> {
+        let dir = self
+            .matches_dir
+            .join(safe_name(id).ok_or("match not found")?);
+        let path = dir.join(MATCH_FILE);
+        let mut summary = read_json(&path).ok_or("match not found")?;
+        let clips = summary["clips"].as_array_mut().ok_or("clip not found")?;
+        let at = clips
+            .iter()
+            .position(|clip| clip["file"].as_str() == Some(file))
+            .ok_or("clip not found")?;
+        let files: Vec<PathBuf> = [
+            member_file(&dir, CLIPS_DIR, file),
+            clips[at]["thumbnail"]
+                .as_str()
+                .and_then(|thumb| member_file(&dir, THUMBS_DIR, thumb)),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+        if !files.is_empty() && !recycle(&files)? {
+            return Ok(Removal::Kept);
+        }
+        clips.remove(at);
+        write_json(&path, &summary).map_err(|e| e.to_string())?;
+        self.refresh(id);
+        Ok(Removal::Removed)
+    }
+
+    /// What a match's list thumbnail is made from, if it has a video and no thumbnail
+    /// yet: the main event of its best highlight, else a third of the way in.
+    pub fn thumbnail_job(&self, id: &str) -> Option<ThumbnailJob> {
+        let dir = self.matches_dir.join(safe_name(id)?);
+        let out = match_thumbnail(&dir);
+        if out.is_file() {
+            return None;
+        }
+        let summary = read_json(&dir.join(MATCH_FILE))?;
+        let video = video_path(&dir, &summary)?;
+        Some(ThumbnailJob {
+            video,
+            at_s: thumbnail_moment(&summary),
+            out,
+        })
+    }
+
+    /// Records a match's thumbnail once made; returns its full path.
+    pub fn set_match_thumbnail(&self, id: &str) -> Option<PathBuf> {
+        let path = match_thumbnail(&self.matches_dir.join(safe_name(id)?));
+        if !path.is_file() {
+            return None;
+        }
+        match self.index.set_thumbnail(id, Some(MATCH_THUMBNAIL)) {
+            Ok(_) => Some(path),
+            Err(error) => {
+                tracing::warn!(%error, "could not update the library index");
+                None
+            }
+        }
     }
 
     /// A saved match's clip file, if the match lists it and it exists (for "show in
@@ -292,6 +592,7 @@ impl Library {
         };
         clip["favorite"] = favorite.into();
         write_json(&path, &summary)?;
+        self.refresh(id);
         Ok(true)
     }
 
@@ -303,23 +604,176 @@ impl Library {
     }
 }
 
-fn card(id: String, source: Source, when_ms: u64, summary: &Value) -> MatchCard {
+/// Where a match folder's list thumbnail is (`MATCH_THUMBNAIL`).
+fn match_thumbnail(dir: &Path) -> PathBuf {
+    dir.join(THUMBS_DIR).join(MATCH_THUMBNAIL_NAME)
+}
+
+/// A recording's stamp for the index: its modification time and size (no video).
+/// `None` if the file isn't there.
+fn file_stamp(file: &Path) -> Option<Stamp> {
+    let meta = std::fs::metadata(file).ok().filter(|m| m.is_file())?;
+    Some(Stamp {
+        modified_ns: unix_ns(meta.modified().unwrap_or(UNIX_EPOCH)),
+        len: i64::try_from(meta.len()).unwrap_or(i64::MAX),
+        video_len: -1,
+    })
+}
+
+/// A match folder's stamp from one listing of it (on Windows the listing carries each
+/// file's size and time, so this costs one directory read rather than a stat per file).
+/// `None` without a `match.json`.
+fn folder_stamp(dir: &Path) -> Option<Stamp> {
+    let mut sidecar = None;
+    let mut video = -1;
+    for entry in std::fs::read_dir(dir).ok()?.flatten() {
+        let name = entry.file_name();
+        if name == MATCH_FILE || name == VIDEO_FILE {
+            let Ok(meta) = entry.metadata() else {
+                continue;
+            };
+            if !meta.is_file() {
+                continue;
+            }
+            let len = i64::try_from(meta.len()).unwrap_or(i64::MAX);
+            if name == VIDEO_FILE {
+                video = len;
+            } else {
+                sidecar = Some((unix_ns(meta.modified().unwrap_or(UNIX_EPOCH)), len));
+            }
+        }
+    }
+    let (modified_ns, len) = sidecar?;
+    Some(Stamp {
+        modified_ns,
+        len,
+        video_len: video,
+    })
+}
+
+/// A saved match as the index keeps it.
+fn game_entry(id: &str, dir: &Path, summary: &Value, stamp: Stamp) -> Entry {
+    let clips = summary["clips"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|clip| {
+            Some(ClipEntry {
+                file: clip["file"].as_str()?.to_owned(),
+                label: clip["label"].as_str().unwrap_or_default().to_owned(),
+                from_s: clip["fromS"].as_f64().unwrap_or_default(),
+                to_s: clip["toS"].as_f64().unwrap_or_default(),
+                favorite: clip["favorite"].as_bool().unwrap_or_default(),
+            })
+        })
+        .collect();
+    Entry {
+        video: video_path(dir, summary).is_some(),
+        thumbnail: match_thumbnail(dir)
+            .is_file()
+            .then(|| MATCH_THUMBNAIL.to_owned()),
+        clips,
+        ..entry(
+            id,
+            Source::Game,
+            summary["startedWallMs"].as_i64(),
+            summary,
+            stamp,
+        )
+    }
+}
+
+/// A replayed recording as the index keeps it: dated by its file.
+fn recording_entry(id: &str, summary: &Value, stamp: Stamp) -> Entry {
+    let when_ms = stamp.modified_ns / 1_000_000;
+    entry(id, Source::Recording, Some(when_ms), summary, stamp)
+}
+
+fn entry(id: &str, source: Source, when_ms: Option<i64>, summary: &Value, stamp: Stamp) -> Entry {
     let text = |key: &str| summary[key].as_str().map(str::to_owned);
-    MatchCard {
-        id,
+    let count = |key: &str| summary[key].as_array().map_or(0, |list| list.len() as i64);
+    let multikills = summary["markers"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|marker| is_multikill(&marker["label"]))
+        .count() as i64;
+    Entry {
+        id: id.to_owned(),
         source,
-        when_ms,
+        when_ms: when_ms.unwrap_or_default(),
         champion: text("champion"),
         queue: text("queue"),
         game_mode: text("gameMode"),
         result: text("result"),
-        kills: summary["kda"]["kills"].as_u64(),
-        deaths: summary["kda"]["deaths"].as_u64(),
-        assists: summary["kda"]["assists"].as_u64(),
+        kills: summary["kda"]["kills"].as_i64(),
+        deaths: summary["kda"]["deaths"].as_i64(),
+        assists: summary["kda"]["assists"].as_i64(),
         duration_s: summary["durationS"].as_f64(),
-        moments: summary["moments"].as_array().map_or(0, Vec::len),
+        moments: count("moments"),
+        multikills,
+        clips: Vec::new(),
         video: false,
+        thumbnail: None,
+        stamp,
     }
+}
+
+fn label(value: &Value) -> Option<MarkerLabel> {
+    serde_json::from_value(value.clone()).ok()
+}
+
+fn is_multikill(value: &Value) -> bool {
+    matches!(
+        label(value),
+        Some(
+            MarkerLabel::DoubleKill
+                | MarkerLabel::TripleKill
+                | MarkerLabel::QuadraKill
+                | MarkerLabel::PentaKill
+        )
+    )
+}
+
+/// Where a match's thumbnail is taken (video seconds): the event its best highlight is
+/// named after, else a third of the way into the video, else 10 s in.
+fn thumbnail_moment(summary: &Value) -> f64 {
+    let markers = summary["markers"]
+        .as_array()
+        .map(Vec::as_slice)
+        .unwrap_or_default();
+    let best = summary["moments"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|moment| Some((moment, label(&moment["label"])?)))
+        .max_by_key(|(_, label)| label.priority());
+    let main = best.and_then(|(moment, label)| {
+        let members: Vec<&Value> = moment["markerIds"]
+            .as_array()?
+            .iter()
+            .filter_map(|id| markers.iter().find(|m| m["id"] == *id))
+            .collect();
+        let named = members
+            .iter()
+            .find(|m| self::label(&m["label"]) == Some(label))
+            .or(members.first())?;
+        named["videoTimeS"].as_f64()
+    });
+    let recording = &summary["recording"];
+    let third = match (recording["frames"].as_f64(), recording["fps"].as_f64()) {
+        (Some(frames), Some(fps)) if fps > 0.0 && frames > 0.0 => Some(frames / fps / 3.0),
+        _ => None,
+    };
+    main.filter(|s| s.is_finite() && *s >= 0.0)
+        .or(third)
+        .unwrap_or(10.0)
+}
+
+fn unix_ns(at: SystemTime) -> i64 {
+    at.duration_since(UNIX_EPOCH)
+        .map(|d| i64::try_from(d.as_nanos()).unwrap_or(i64::MAX))
+        .unwrap_or_default()
 }
 
 /// `<folder>/<name>` inside a match folder, if `relative` is exactly that (one plain
@@ -493,15 +947,6 @@ fn read_json(path: &Path) -> Option<Value> {
     serde_json::from_str(text.trim_start_matches('\u{feff}')).ok()
 }
 
-fn modified_ms(path: &Path) -> u64 {
-    std::fs::metadata(path)
-        .and_then(|m| m.modified())
-        .unwrap_or(SystemTime::UNIX_EPOCH)
-        .duration_since(UNIX_EPOCH)
-        .map(|d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
-        .unwrap_or_default()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -646,6 +1091,7 @@ mod tests {
         ] {
             let json = serde_json::json!({ "recording": { "file": file } }).to_string();
             std::fs::write(matches.join("m1").join(MATCH_FILE), json).unwrap();
+            library.sync();
             let review = library.get("m1").unwrap();
             assert_eq!(review.get("videoPath").is_some(), plays, "{file}");
             assert_eq!(library.list()[0].video, plays, "{file}");
@@ -809,6 +1255,576 @@ mod tests {
             assert!(library.get(id).is_none(), "{id:?}");
         }
         assert_eq!(slug("Ranked Solo/Duo"), "Ranked-Solo-Duo");
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// A match folder with a `match.json` like the tracker writes, trimmed to what the
+    /// index reads.
+    #[allow(clippy::too_many_arguments)]
+    fn write_match(
+        matches: &Path,
+        id: &str,
+        when_ms: i64,
+        champion: &str,
+        queue: Option<&str>,
+        result: Option<&str>,
+        kills: i64,
+        duration_s: f64,
+        labels: &[&str],
+        clips: usize,
+        video: bool,
+    ) {
+        let dir = matches.join(id);
+        std::fs::create_dir_all(&dir).unwrap();
+        let markers: Vec<Value> = labels
+            .iter()
+            .enumerate()
+            .map(|(i, label)| {
+                let at = 100.0 * (i + 1) as f64;
+                serde_json::json!({ "id": i + 1, "label": label, "gameTimeS": at,
+                    "videoTimeS": at - 40.0, "preS": 12, "postS": 8 })
+            })
+            .collect();
+        let moments: Vec<Value> = labels
+            .iter()
+            .enumerate()
+            .map(|(i, label)| serde_json::json!({ "label": label, "markerIds": [i + 1] }))
+            .collect();
+        let clips: Vec<Value> = (1..=clips)
+            .map(|n| {
+                serde_json::json!({ "file": format!("clips/{n:04}_kill.mp4"), "fromS": 10,
+                    "toS": 30, "label": "kill", "favorite": n == 1 })
+            })
+            .collect();
+        let mut json = serde_json::json!({
+            "schema": 1, "id": id, "startedWallMs": when_ms, "champion": champion,
+            "gameMode": "CLASSIC", "kda": { "kills": kills, "deaths": 2, "assists": 3 },
+            "durationS": duration_s, "markers": markers, "moments": moments, "clips": clips,
+            "recording": { "file": "match.mp4", "frames": (duration_s * 60.0) as i64, "fps": 60 }
+        });
+        if let Some(queue) = queue {
+            json["queue"] = queue.into();
+        }
+        if let Some(result) = result {
+            json["result"] = result.into();
+        }
+        std::fs::write(dir.join(MATCH_FILE), json.to_string()).unwrap();
+        if video {
+            std::fs::write(dir.join(VIDEO_FILE), b"video").unwrap();
+        }
+    }
+
+    fn ids(page: &MatchPage) -> Vec<&str> {
+        page.items.iter().map(|card| card.id.as_str()).collect()
+    }
+
+    fn card_ids(cards: &[MatchCard]) -> Vec<&str> {
+        cards.iter().map(|card| card.id.as_str()).collect()
+    }
+
+    #[test]
+    fn the_index_is_built_from_the_sidecars_and_kept_in_step_with_them() {
+        let root = temp_dir("index");
+        let matches = root.join("matches");
+        let day = 86_400_000;
+        let base = 1_792_080_720_000;
+        let ranked = Some("Ranked Solo/Duo");
+        let multikill = ["kill", "double_kill"];
+        write_match(
+            &matches,
+            "a",
+            base,
+            "Shyvana",
+            ranked,
+            Some("win"),
+            7,
+            1800.0,
+            &multikill,
+            2,
+            true,
+        );
+        write_match(
+            &matches,
+            "b",
+            base + day,
+            "Ahri",
+            None,
+            Some("lose"),
+            2,
+            1500.0,
+            &["death"],
+            0,
+            false,
+        );
+        write_match(
+            &matches,
+            "c",
+            base + 2 * day,
+            "Jinx",
+            Some("ARAM"),
+            None,
+            12,
+            1100.0,
+            &[],
+            0,
+            true,
+        );
+        std::fs::create_dir_all(matches.join("recording-in-progress")).unwrap();
+        let open = || {
+            Library::new(
+                matches.clone(),
+                root.join("recordings"),
+                SessionConfig::default(),
+            )
+        };
+        let library = open();
+        assert_eq!(library.index_opened(), Opened::New);
+        assert_eq!(library.index_path(), Some(root.join(INDEX_FILE).as_path()));
+
+        let first = library.sync();
+        assert_eq!(
+            (first.read, first.removed, first.total),
+            (3, 0, 3),
+            "a folder without match.json isn't a match"
+        );
+        let cards = library.list();
+        assert_eq!(card_ids(&cards), ["c", "b", "a"], "newest first");
+        let a = &cards[2];
+        assert_eq!(
+            (a.multikills, a.clips, a.favorite_clips, a.video),
+            (1, 2, 1, true)
+        );
+        assert_eq!(
+            (a.kills, a.moments, a.queue.as_deref()),
+            (Some(7), 2, ranked)
+        );
+        assert_eq!(
+            (cards[1].video, cards[1].result.as_deref()),
+            (false, Some("lose"))
+        );
+        assert_eq!(library.sync().read, 0, "nothing changed, nothing read");
+
+        // Changed, removed and added outside the app: the next sync follows.
+        write_match(
+            &matches,
+            "b",
+            base + day,
+            "Ahri",
+            None,
+            Some("win"),
+            9,
+            1500.0,
+            &["death"],
+            0,
+            false,
+        );
+        std::fs::remove_dir_all(matches.join("c")).unwrap();
+        write_match(
+            &matches,
+            "d",
+            base + 3 * day,
+            "Lux",
+            None,
+            Some("win"),
+            1,
+            900.0,
+            &[],
+            0,
+            false,
+        );
+        let again = library.sync();
+        assert_eq!((again.read, again.removed, again.total), (2, 1, 3));
+        let cards = library.list();
+        assert_eq!(card_ids(&cards), ["d", "b", "a"]);
+        assert_eq!(
+            (cards[1].result.as_deref(), cards[1].kills),
+            (Some("win"), Some(9))
+        );
+        // A video that appears counts as a change too.
+        std::fs::write(matches.join("b").join(VIDEO_FILE), b"video").unwrap();
+        assert_eq!(library.sync().read, 1);
+        assert!(library.list()[1].video);
+        drop(library);
+
+        // The next start keeps the index and reads nothing.
+        let library = open();
+        assert_eq!(library.index_opened(), Opened::Existing);
+        assert_eq!(library.sync().read, 0);
+        assert_eq!(library.list().len(), 3);
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn a_damaged_or_outdated_index_is_rebuilt_from_the_sidecars() {
+        let root = temp_dir("damaged");
+        let matches = root.join("matches");
+        for (i, id) in ["a", "b", "c"].into_iter().enumerate() {
+            let when = 1_792_080_720_000 + i as i64;
+            write_match(
+                &matches,
+                id,
+                when,
+                "Shyvana",
+                None,
+                Some("win"),
+                1,
+                600.0,
+                &[],
+                0,
+                false,
+            );
+        }
+        let open = || {
+            Library::new(
+                matches.clone(),
+                root.join("recordings"),
+                SessionConfig::default(),
+            )
+        };
+        assert_eq!(open().list().len(), 3);
+
+        // Garbage where the index was.
+        std::fs::write(
+            root.join(INDEX_FILE),
+            b"not a SQLite database, not even close",
+        )
+        .unwrap();
+        let library = open();
+        assert_eq!(library.index_opened(), Opened::New);
+        assert_eq!(library.sync().read, 3);
+        assert_eq!(library.list().len(), 3);
+        drop(library);
+
+        // An index from another schema.
+        let conn = rusqlite::Connection::open(root.join(INDEX_FILE)).unwrap();
+        conn.execute("UPDATE meta SET value = '99' WHERE key = 'schema'", [])
+            .unwrap();
+        drop(conn);
+        let library = open();
+        assert_eq!(library.index_opened(), Opened::New);
+        assert_eq!(library.list().len(), 3);
+        drop(library);
+
+        // A truncated file.
+        let bytes = std::fs::read(root.join(INDEX_FILE)).unwrap();
+        std::fs::write(root.join(INDEX_FILE), &bytes[..bytes.len() / 3]).unwrap();
+        let library = open();
+        assert_ne!(library.index_opened(), Opened::Existing);
+        assert_eq!(library.list().len(), 3);
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn the_list_pages_filters_and_sorts() {
+        let root = temp_dir("query");
+        let matches = root.join("matches");
+        let base = 1_792_080_720_000_i64;
+        let hour = 3_600_000;
+        let champions = ["Ahri", "Jinx", "Shyvana", "Lux", "Garen"];
+        for i in 0..25_i64 {
+            let result = match i % 3 {
+                0 => Some("win"),
+                1 => Some("lose"),
+                _ => None,
+            };
+            let queue = (i % 2 == 0).then_some("Ranked Solo/Duo");
+            let labels: &[&str] = if i % 5 == 0 {
+                &["kill", "triple_kill"]
+            } else {
+                &["kill"]
+            };
+            let length = 600.0 + (i * 37 % 25) as f64 * 60.0;
+            let clips = usize::from(i % 4 == 0);
+            let champion = champions[(i % 5) as usize];
+            let id = format!("m{i:02}");
+            write_match(
+                &matches,
+                &id,
+                base + i * hour,
+                champion,
+                queue,
+                result,
+                i,
+                length,
+                labels,
+                clips,
+                false,
+            );
+        }
+        let library = Library::new(matches, root.join("recordings"), SessionConfig::default());
+        let page = |query: MatchQuery| library.query(&query).unwrap();
+        let all = MatchQuery::default;
+
+        let first = page(MatchQuery { limit: 10, ..all() });
+        assert_eq!((first.total, first.items.len(), first.offset), (25, 10, 0));
+        assert_eq!(first.items[0].id, "m24", "newest first");
+        let last = page(MatchQuery {
+            offset: 20,
+            limit: 10,
+            ..all()
+        });
+        assert_eq!(ids(&last), ["m04", "m03", "m02", "m01", "m00"]);
+        assert_eq!(
+            page(all()).items.len(),
+            25,
+            "the default page holds them all"
+        );
+
+        let jinx = page(MatchQuery {
+            champion: Some("Jinx".into()),
+            ..all()
+        });
+        assert_eq!(ids(&jinx), ["m21", "m16", "m11", "m06", "m01"]);
+        let ranked = page(MatchQuery {
+            queue: Some("Ranked Solo/Duo".into()),
+            ..all()
+        });
+        assert_eq!(ranked.total, 13);
+        let classic = page(MatchQuery {
+            queue: Some("CLASSIC".into()),
+            ..all()
+        });
+        assert_eq!(
+            classic.total, 12,
+            "the game mode stands in for an unknown queue"
+        );
+        let wins = page(MatchQuery {
+            result: Some("win".into()),
+            ..all()
+        });
+        assert_eq!(wins.total, 9);
+        let unknown = page(MatchQuery {
+            result: Some("unknown".into()),
+            ..all()
+        });
+        assert_eq!(unknown.total, 8);
+        let clipped = page(MatchQuery {
+            has_clips: true,
+            ..all()
+        });
+        assert_eq!(
+            ids(&clipped),
+            ["m24", "m20", "m16", "m12", "m08", "m04", "m00"]
+        );
+        let multikills = page(MatchQuery {
+            has_multikill: true,
+            ..all()
+        });
+        assert_eq!(ids(&multikills), ["m20", "m15", "m10", "m05", "m00"]);
+        let window = page(MatchQuery {
+            from_ms: Some(base + 10 * hour),
+            to_ms: Some(base + 13 * hour),
+            ..all()
+        });
+        assert_eq!(ids(&window), ["m12", "m11", "m10"]);
+        let combined = page(MatchQuery {
+            champion: Some("Ahri".into()),
+            result: Some("win".into()),
+            has_multikill: true,
+            ..all()
+        });
+        assert_eq!(ids(&combined), ["m15", "m00"]);
+
+        let oldest = page(MatchQuery {
+            sort: Sort::Oldest,
+            limit: 2,
+            ..all()
+        });
+        assert_eq!(oldest.items[0].id, "m00");
+        let kills = page(MatchQuery {
+            sort: Sort::MostKills,
+            limit: 1,
+            ..all()
+        });
+        assert_eq!(kills.items[0].id, "m24");
+        let longest = page(MatchQuery {
+            sort: Sort::Longest,
+            ..all()
+        });
+        let lengths: Vec<f64> = longest
+            .items
+            .iter()
+            .map(|c| c.duration_s.unwrap())
+            .collect();
+        assert!(lengths.windows(2).all(|w| w[0] >= w[1]), "{lengths:?}");
+        // Text from the window is only ever a value, never SQL.
+        let odd = page(MatchQuery {
+            champion: Some("x' OR '1'='1".into()),
+            ..all()
+        });
+        assert_eq!(odd.total, 0);
+
+        let facets = library.facets().unwrap();
+        assert_eq!(
+            facets.champions,
+            ["Ahri", "Garen", "Jinx", "Lux", "Shyvana"]
+        );
+        assert_eq!(facets.queues, ["CLASSIC", "Ranked Solo/Duo"]);
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn removing_a_clip_recycles_its_files_and_updates_the_match_and_the_index() {
+        let root = temp_dir("remove");
+        let matches = root.join("matches");
+        write_match(
+            &matches,
+            "m1",
+            1_792_080_720_000,
+            "Shyvana",
+            None,
+            Some("win"),
+            3,
+            900.0,
+            &["kill"],
+            2,
+            true,
+        );
+        let dir = matches.join("m1");
+        std::fs::create_dir_all(dir.join(CLIPS_DIR)).unwrap();
+        std::fs::create_dir_all(dir.join(THUMBS_DIR)).unwrap();
+        for n in [1, 2] {
+            std::fs::write(dir.join(format!("clips/{n:04}_kill.mp4")), b"clip").unwrap();
+        }
+        // Clip 1 has a thumbnail.
+        let mut json = read_json(&dir.join(MATCH_FILE)).unwrap();
+        json["clips"][0]["thumbnail"] = "thumbs/0001.jpg".into();
+        std::fs::write(dir.join(MATCH_FILE), json.to_string()).unwrap();
+        std::fs::write(dir.join("thumbs/0001.jpg"), b"jpeg").unwrap();
+        let library = Library::new(matches, root.join("recordings"), SessionConfig::default());
+        assert_eq!(library.list()[0].clips, 2);
+        let first = "clips/0001_kill.mp4";
+
+        // Declined (the recycling was cancelled) or failed: nothing changes.
+        let declined = library.remove_clip("m1", first, |_| Ok(false)).unwrap();
+        assert_eq!(declined, Removal::Kept);
+        let failed = library.remove_clip("m1", first, |_| Err("the shell said no".into()));
+        assert_eq!(failed, Err("the shell said no".to_owned()));
+        assert_eq!(
+            library.get("m1").unwrap()["clips"]
+                .as_array()
+                .unwrap()
+                .len(),
+            2
+        );
+        assert!(dir.join(first).is_file());
+
+        // Recycled: both files go to the bin, the clip leaves the match and the index.
+        let bin = root.join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        let mut asked = Vec::new();
+        let removed = library
+            .remove_clip("m1", first, |files| {
+                for file in files {
+                    asked.push(file.clone());
+                    std::fs::rename(file, bin.join(file.file_name().unwrap())).unwrap();
+                }
+                Ok(true)
+            })
+            .unwrap();
+        assert_eq!(removed, Removal::Removed);
+        let expected = [
+            dir.join("clips").join("0001_kill.mp4"),
+            dir.join("thumbs").join("0001.jpg"),
+        ];
+        assert_eq!(asked, expected);
+        assert!(bin.join("0001_kill.mp4").is_file() && bin.join("0001.jpg").is_file());
+        let clips = library.get("m1").unwrap()["clips"].clone();
+        assert_eq!(clips.as_array().unwrap().len(), 1);
+        assert_eq!(clips[0]["file"], "clips/0002_kill.mp4");
+        let card = &library.list()[0];
+        assert_eq!((card.clips, card.favorite_clips), (1, 0));
+
+        // A clip whose file is already gone just leaves the list: nothing to recycle.
+        std::fs::remove_file(dir.join("clips/0002_kill.mp4")).unwrap();
+        let gone = library
+            .remove_clip("m1", "clips/0002_kill.mp4", |_| {
+                panic!("nothing to recycle")
+            })
+            .unwrap();
+        assert_eq!(gone, Removal::Removed);
+        assert_eq!(library.list()[0].clips, 0);
+        let again = library.remove_clip("m1", "clips/0002_kill.mp4", |_| Ok(true));
+        assert!(again.is_err(), "not listed any more");
+        assert!(library.remove_clip("../m1", first, |_| Ok(true)).is_err());
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn a_match_thumbnail_shows_its_best_highlight() {
+        let root = temp_dir("thumbnail");
+        let matches = root.join("matches");
+        let when = 1_792_080_720_000;
+        let labels = ["kill", "triple_kill", "death"];
+        write_match(
+            &matches,
+            "m1",
+            when,
+            "Shyvana",
+            None,
+            Some("win"),
+            3,
+            900.0,
+            &labels,
+            0,
+            true,
+        );
+        write_match(
+            &matches,
+            "m2",
+            when + 1,
+            "Ahri",
+            None,
+            Some("win"),
+            3,
+            900.0,
+            &[],
+            0,
+            true,
+        );
+        write_match(
+            &matches,
+            "m3",
+            when + 2,
+            "Lux",
+            None,
+            Some("win"),
+            3,
+            900.0,
+            &["kill"],
+            0,
+            false,
+        );
+        let library = Library::new(
+            matches.clone(),
+            root.join("recordings"),
+            SessionConfig::default(),
+        );
+        let job = library.thumbnail_job("m1").unwrap();
+        assert_eq!(job.video, matches.join("m1").join(VIDEO_FILE));
+        assert_eq!(job.out, matches.join("m1").join("thumbs").join("match.jpg"));
+        assert_eq!(
+            job.at_s, 160.0,
+            "the triple kill (marker 2), not the kill or the death"
+        );
+        assert_eq!(
+            library.thumbnail_job("m2").unwrap().at_s,
+            300.0,
+            "a third of the way in"
+        );
+        assert!(library.thumbnail_job("m3").is_none(), "no video");
+
+        assert!(library
+            .list()
+            .iter()
+            .all(|card| card.thumbnail_path.is_none()));
+        assert_eq!(library.set_match_thumbnail("m1"), None, "not made yet");
+        std::fs::create_dir_all(job.out.parent().unwrap()).unwrap();
+        std::fs::write(&job.out, b"jpeg").unwrap();
+        assert_eq!(library.set_match_thumbnail("m1"), Some(job.out.clone()));
+        let card = library.list().into_iter().find(|c| c.id == "m1").unwrap();
+        assert_eq!(card.thumbnail_path, Some(job.out.display().to_string()));
+        assert!(library.thumbnail_job("m1").is_none(), "made already");
         std::fs::remove_dir_all(&root).ok();
     }
 }

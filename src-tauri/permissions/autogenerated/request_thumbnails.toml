@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-request-thumbnails"
+description = "Enables the request_thumbnails command without any pre-configured scope."
+commands.allow = ["request_thumbnails"]
+
+[[permission]]
+identifier = "deny-request-thumbnails"
+description = "Denies the request_thumbnails command without any pre-configured scope."
+commands.deny = ["request_thumbnails"]

@@ -282,8 +282,14 @@ Folder per match (portable, rebuildable):
 }
 ```
 
-SQLite (`library.db`) is a cache of the sidecars. If it is lost or corrupt, rescan the
-folders. Outplayed writes **no sidecar files**. All match metadata lives in the CEF
+SQLite (`library.db`, in the library's root) is a cache of the sidecars: a `matches`
+table (one row per folder: champion, queue, result, K/D/A, duration, counts of moments,
+multikills and clips, video, list thumbnail, and the sidecar's size and time) and a
+`clips` table. If it is lost, corrupt or of another schema, it is rebuilt from the
+folders; each start (and the list, at most every 10 s) re-reads only the sidecars whose
+size or time changed. Measured at 600 synthetic matches (release build): rebuild 0.24 s,
+check with nothing changed 37 ms, a page of 100 in 2–5 ms. Outplayed writes **no
+sidecar files**. All match metadata lives in the CEF
 profile's IndexedDB `MediaDatabase` (v17, store `matches`), migrated from older
 localStorage `MATCH_*` keys. The `D:\Outplayed\Recovered\outplayed-library-db-backup`
 folder on this machine shows that database has needed recovery before. Downplayed

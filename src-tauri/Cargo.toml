@@ -45,6 +45,9 @@ regex = "1"
 sysinfo = { version = "0.38", default-features = false, features = ["system"] }
 dirs = "6"
 thiserror = "2"
+# The library's index (`library.db`), a cache of the match folders' sidecars; SQLite is
+# compiled in.
+rusqlite = { version = "0.40.2", features = ["bundled"] }
 
 # Capture: the monitor League is on (DXGI adapter/output), a job object so ffmpeg never
 # outlives Downplayed, and WASAPI audio. Tauri already builds this version of the crate.

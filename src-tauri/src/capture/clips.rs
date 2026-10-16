@@ -21,8 +21,10 @@ pub const DEFAULT_LABEL: &str = "clip";
 /// Shorter spans aren't worth a file.
 const MIN_CLIP_S: f64 = 1.0;
 const MAX_LABEL_LEN: usize = 40;
-/// Thumbnails are this wide (height follows the video's shape).
-const THUMBNAIL_WIDTH: u32 = 480;
+/// Thumbnail widths (height follows the video's shape): a clip's in the review, a
+/// match's in the list.
+pub const CLIP_THUMBNAIL_WIDTH: u32 = 480;
+pub const MATCH_THUMBNAIL_WIDTH: u32 = 320;
 
 /// One entry of `match.json`'s `clips`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -170,14 +172,14 @@ pub fn cut_args(video: &Path, from_s: f64, to_s: f64, out: &Path) -> Vec<OsStrin
     out_args
 }
 
-/// One frame of `video` at `at_s` as a small JPEG.
-pub fn thumbnail_args(video: &Path, at_s: f64, out: &Path) -> Vec<OsString> {
+/// One frame of `video` at `at_s` as a small JPEG, `width` pixels wide.
+pub fn thumbnail_args(video: &Path, at_s: f64, width: u32, out: &Path) -> Vec<OsString> {
     let mut out_args = args(["-hide_banner", "-nostdin", "-loglevel", "error", "-ss"]);
     out_args.push(format!("{at_s:.3}").into());
     out_args.extend(args(["-i"]));
     out_args.push(video.into());
     out_args.extend(args(["-frames:v", "1", "-vf"]));
-    out_args.push(format!("scale={THUMBNAIL_WIDTH}:-2").into());
+    out_args.push(format!("scale={width}:-2").into());
     out_args.extend(args(["-q:v", "4", "-f", "image2", "-update", "1", "-n"]));
     out_args.push(out.into());
     out_args
@@ -289,12 +291,20 @@ mod tests {
         let thumb = text(&thumbnail_args(
             video,
             104.0,
+            CLIP_THUMBNAIL_WIDTH,
             Path::new(r"C:\m\thumbs\0001.jpg"),
         ));
         assert!(thumb.windows(2).any(|w| w == ["-ss", "104.000"]));
         assert!(thumb.windows(2).any(|w| w == ["-frames:v", "1"]));
         assert!(thumb.windows(2).any(|w| w == ["-vf", "scale=480:-2"]));
         assert_eq!(thumb.last().unwrap(), r"C:\m\thumbs\0001.jpg");
+        let small = text(&thumbnail_args(
+            video,
+            300.0,
+            MATCH_THUMBNAIL_WIDTH,
+            Path::new(r"C:\m\thumbs\match.jpg"),
+        ));
+        assert!(small.windows(2).any(|w| w == ["-vf", "scale=320:-2"]));
     }
 
     #[test]

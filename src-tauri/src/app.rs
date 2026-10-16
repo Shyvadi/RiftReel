@@ -14,12 +14,16 @@ use tokio::sync::{mpsc, watch};
 use crate::capture::{ffmpeg, CaptureConfig, CaptureController};
 use crate::league::client::scan_processes;
 use crate::league::live::LiveClient;
-use crate::library::{Library, MatchCard};
+use crate::library::{Facets, Library, MatchPage, MatchQuery};
 use crate::logging;
 use crate::settings::{AppPaths, LoadOutcome, Settings};
+use crate::thumbnails::Thumbnails;
 use crate::tracker::runtime::{watch_league, Timings, TrackerRuntime, TrackerStatus};
 use crate::tracker::session::MatchSummary;
 use crate::tray;
+
+/// Most thumbnails one request may queue (a screenful is a dozen).
+const THUMBNAILS_PER_REQUEST: usize = 100;
 
 /// How often the process table is scanned for the League client and the game.
 const PROCESS_SCAN_INTERVAL: Duration = Duration::from_secs(3);
@@ -76,13 +80,37 @@ fn get_status(state: tauri::State<'_, AppState>) -> AppStatus {
     }
 }
 
-/// Saved matches and recordings, newest first.
+/// A page of saved matches and recordings, filtered and sorted (newest first by default).
 #[tauri::command]
-async fn list_matches(state: tauri::State<'_, AppState>) -> Result<Vec<MatchCard>, String> {
+async fn list_matches(
+    query: Option<MatchQuery>,
+    state: tauri::State<'_, AppState>,
+) -> Result<MatchPage, String> {
     let library = state.library.clone();
-    tauri::async_runtime::spawn_blocking(move || library.list())
+    let query = query.unwrap_or_default();
+    tauri::async_runtime::spawn_blocking(move || library.query(&query))
         .await
+        .map_err(|e| e.to_string())?
         .map_err(|e| e.to_string())
+}
+
+/// The champions and queues the list's filters offer.
+#[tauri::command]
+async fn match_filters(state: tauri::State<'_, AppState>) -> Result<Facets, String> {
+    let library = state.library.clone();
+    tauri::async_runtime::spawn_blocking(move || library.facets())
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())
+}
+
+/// Queues list thumbnails for matches shown without one (they arrive as
+/// `match-thumbnail` events).
+#[tauri::command]
+fn request_thumbnails(ids: Vec<String>, thumbnails: tauri::State<'_, Thumbnails>) {
+    for id in ids.into_iter().take(THUMBNAILS_PER_REQUEST) {
+        thumbnails.request(id);
+    }
 }
 
 /// One match or recording for the review view.
@@ -109,6 +137,7 @@ async fn save_clip(
     to_s: f64,
     label: Option<String>,
     thumbnail_s: Option<f64>,
+    app: AppHandle,
     state: tauri::State<'_, AppState>,
 ) -> Result<serde_json::Value, String> {
     let binary = state
@@ -133,10 +162,13 @@ async fn save_clip(
         "clip saved"
     );
     let library = state.library.clone();
-    tauri::async_runtime::spawn_blocking(move || library.add_clip(&id, &clip))
+    let match_id = id.clone();
+    let shown = tauri::async_runtime::spawn_blocking(move || library.add_clip(&match_id, &clip))
         .await
         .map_err(|e| e.to_string())?
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    let _ = app.emit("matches-changed", &id);
+    Ok(shown)
 }
 
 /// Marks a clip of a saved match as a favorite, or not.
@@ -145,19 +177,23 @@ async fn set_clip_favorite(
     id: String,
     file: String,
     favorite: bool,
+    app: AppHandle,
     state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
     let _one_at_a_time = state.match_edits.lock().await;
     let library = state.library.clone();
+    let match_id = id.clone();
     let changed = tauri::async_runtime::spawn_blocking(move || {
-        library.set_clip_favorite(&id, &file, favorite)
+        library.set_clip_favorite(&match_id, &file, favorite)
     })
     .await
     .map_err(|e| e.to_string())?
     .map_err(|e| e.to_string())?;
-    changed
-        .then_some(())
-        .ok_or_else(|| "clip not found".to_owned())
+    if !changed {
+        return Err("clip not found".to_owned());
+    }
+    let _ = app.emit("matches-changed", &id);
+    Ok(())
 }
 
 /// Opens Explorer on a clip of a saved match, selected.
@@ -224,6 +260,7 @@ pub fn run() {
     ));
     let capture = settings.capture_config(&paths);
     let matches_dir = paths.matches_dir.clone();
+    let ffmpeg = ffmpeg::locate(capture.ffmpeg.as_deref());
 
     let (status_tx, status_rx) = watch::channel(TrackerStatus::default());
     let app = tauri::Builder::default()
@@ -232,12 +269,14 @@ pub fn run() {
             paths,
             library: library.clone(),
             review_request: Mutex::new(None),
-            ffmpeg: ffmpeg::locate(capture.ffmpeg.as_deref()),
+            ffmpeg: ffmpeg.clone(),
             match_edits: tokio::sync::Mutex::new(()),
         })
         .invoke_handler(tauri::generate_handler![
             get_status,
             list_matches,
+            match_filters,
+            request_thumbnails,
             get_match,
             save_clip,
             set_clip_favorite,
@@ -249,11 +288,29 @@ pub fn run() {
             app.asset_protocol_scope()
                 .allow_directory(&matches_dir, true)?;
             tray::create(app.handle())?;
+            let thumbnails = Thumbnails::start(app.handle().clone(), library.clone(), ffmpeg);
+            app.manage(thumbnails.clone());
+            // Matches changed while Downplayed wasn't running (or a new index) are read
+            // now, so the window's first page doesn't wait for them.
+            let indexed = library.clone();
+            tauri::async_runtime::spawn_blocking(move || {
+                let report = indexed.sync();
+                tracing::info!(
+                    matches = report.total,
+                    read = report.read,
+                    removed = report.removed,
+                    ms = report.elapsed.as_millis() as u64,
+                    index = ?indexed.index_opened(),
+                    path = ?indexed.index_path(),
+                    "library index ready"
+                );
+            });
             start_tracker(
                 app.handle(),
                 &settings,
                 capture,
                 library,
+                thumbnails,
                 status_tx,
                 status_rx,
             );
@@ -282,6 +339,7 @@ fn start_tracker(
     settings: &Settings,
     capture: CaptureConfig,
     library: Arc<Library>,
+    thumbnails: Thumbnails,
     status_tx: watch::Sender<TrackerStatus>,
     mut status_rx: watch::Receiver<TrackerStatus>,
 ) {
@@ -309,6 +367,7 @@ fn start_tracker(
             tauri::async_runtime::spawn(save_matches(
                 app.clone(),
                 library,
+                thumbnails,
                 summary_rx,
                 settings.ui.open_review_after_game,
             ));
@@ -327,10 +386,12 @@ fn start_tracker(
     });
 }
 
-/// Saves each finished match to the library, then (if enabled) opens its review.
+/// Saves each finished match to the library, queues its list thumbnail, then (if
+/// enabled) opens its review.
 async fn save_matches(
     app: AppHandle,
     library: Arc<Library>,
+    thumbnails: Thumbnails,
     mut summaries: mpsc::UnboundedReceiver<MatchSummary>,
     open_review: bool,
 ) {
@@ -349,6 +410,7 @@ async fn save_matches(
             }
         };
         tracing::info!(%id, "match saved");
+        thumbnails.request(id.clone());
         let _ = app.emit("matches-changed", &id);
         if open_review {
             tauri::async_runtime::spawn(open_review_after_game(app.clone(), id));

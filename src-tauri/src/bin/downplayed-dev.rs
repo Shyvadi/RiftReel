@@ -48,6 +48,7 @@ use downplayed_lib::capture::{
 };
 use downplayed_lib::league::client::{self, LcuClient};
 use downplayed_lib::league::live::{LiveClient, EVENT_POLL_INTERVAL};
+use downplayed_lib::library::{self, Library, MatchQuery, Sort};
 use downplayed_lib::logging;
 use downplayed_lib::recorder::{self, RecorderTimings};
 use downplayed_lib::replay::{self, clock, render_text, Fixture, LcuRecording};
@@ -64,7 +65,8 @@ const USAGE: &str = "usage:
   downplayed-dev eog
   downplayed-dev probe [--force]
   downplayed-dev capture [seconds] [out-dir] [--stop-on-game]
-  downplayed-dev audio";
+  downplayed-dev audio
+  downplayed-dev library [--cold]";
 
 #[derive(Default)]
 struct Flags {
@@ -73,6 +75,7 @@ struct Flags {
     json: bool,
     force: bool,
     stop_on_game: bool,
+    cold: bool,
     positional: Vec<String>,
 }
 
@@ -86,6 +89,7 @@ impl Flags {
                 "--json" => flags.json = true,
                 "--force" => flags.force = true,
                 "--stop-on-game" => flags.stop_on_game = true,
+                "--cold" => flags.cold = true,
                 other if other.starts_with("--") => return Err(format!("unknown flag {other}")),
                 other => flags.positional.push(other.to_owned()),
             }
@@ -126,6 +130,7 @@ async fn main() -> ExitCode {
             "probe" => run_probe(&flags).await,
             "audio" => run_audio(),
             "capture" => run_capture(&flags).await,
+            "library" => run_library(&flags),
             "help" | "-h" | "--help" => {
                 println!("{USAGE}");
                 Ok(())
@@ -382,6 +387,94 @@ async fn run_live(flags: &Flags) -> Result<(), String> {
 }
 
 /// The user's settings as the app reads them (defaults if there is no file).
+/// Indexes the library (`DOWNPLAYED_HOME`, or the real one) and times it: the sync, then
+/// a few list queries. `--cold` deletes the index first (it's a cache of the folders).
+fn run_library(flags: &Flags) -> Result<(), String> {
+    let paths = AppPaths::resolve();
+    let settings = load_settings(&paths);
+    let index = paths
+        .matches_dir
+        .parent()
+        .map(|root| root.join(library::INDEX_FILE))
+        .ok_or("no library root")?;
+    if flags.cold {
+        let _ = std::fs::remove_file(&index);
+    }
+    let started = Instant::now();
+    let library = Library::new(
+        paths.matches_dir.clone(),
+        paths.recordings_dir.clone(),
+        settings.tracker_config().session,
+    );
+    let opened = started.elapsed();
+    let report = library.sync();
+    println!(
+        "index {} ({:?}) opened in {:.1} ms",
+        index.display(),
+        library.index_opened(),
+        opened.as_secs_f64() * 1000.0
+    );
+    println!(
+        "sync: {} matches, {} read, {} removed, in {:.1} ms",
+        report.total,
+        report.read,
+        report.removed,
+        report.elapsed.as_secs_f64() * 1000.0
+    );
+    let again = library.sync();
+    println!(
+        "sync again (nothing changed): {:.1} ms",
+        again.elapsed.as_secs_f64() * 1000.0
+    );
+    let queries = [
+        ("first page", MatchQuery::default()),
+        (
+            "page 6",
+            MatchQuery {
+                offset: 500,
+                ..MatchQuery::default()
+            },
+        ),
+        (
+            "wins with a multikill, most kills first",
+            MatchQuery {
+                result: Some("win".into()),
+                has_multikill: true,
+                sort: Sort::MostKills,
+                ..MatchQuery::default()
+            },
+        ),
+        (
+            "has clips, oldest first",
+            MatchQuery {
+                offset: 1,
+                has_clips: true,
+                sort: Sort::Oldest,
+                ..MatchQuery::default()
+            },
+        ),
+    ];
+    for (name, query) in queries {
+        let started = Instant::now();
+        let page = library.query(&query).map_err(|e| e.to_string())?;
+        println!(
+            "{name}: {} of {} in {:.2} ms",
+            page.items.len(),
+            page.total,
+            started.elapsed().as_secs_f64() * 1000.0
+        );
+    }
+    let started = Instant::now();
+    let facets = library.facets().map_err(|e| e.to_string())?;
+    println!(
+        "filters: {} champions, {} queues in {:.2} ms",
+        facets.champions.len(),
+        facets.queues.len(),
+        started.elapsed().as_secs_f64() * 1000.0
+    );
+    Ok(())
+}
+
 fn load_settings(paths: &AppPaths) -> Settings {
     let mut settings = Settings::load(&paths.settings_file).unwrap_or_default();
     for warning in settings.validate() {

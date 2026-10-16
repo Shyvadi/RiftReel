@@ -9,18 +9,8 @@
 
   let app = $state(null);
   let error = $state('');
-  let matches = $state([]);
-  let loadingMatches = $state(true);
   /** The match under review, or null for the overview. */
   let openId = $state(null);
-
-  function loadMatches() {
-    loadingMatches = true;
-    invoke('list_matches')
-      .then((list) => (matches = list))
-      .catch((e) => (error = String(e)))
-      .finally(() => (loadingMatches = false));
-  }
 
   onMount(() => {
     const stops = [];
@@ -30,11 +20,9 @@
         if (status.openMatch) openId = status.openMatch;
       })
       .catch((e) => (error = String(e)));
-    loadMatches();
     listen('status', (event) => {
       if (app) app.tracker = event.payload;
     }).then((stop) => stops.push(stop));
-    listen('matches-changed', () => loadMatches()).then((stop) => stops.push(stop));
     listen('open-match', (event) => (openId = event.payload)).then((stop) => stops.push(stop));
     return () => stops.forEach((stop) => stop());
   });
@@ -52,8 +40,11 @@
 
   {#if openId}
     <MatchView id={openId} onBack={() => (openId = null)} />
-  {:else if app}
+  {/if}
+  {#if app}
     {@const tracker = app.tracker}
+    <!-- Kept while a review is open, so the list keeps its place. -->
+    <div hidden={!!openId}>
     <StatusPanel {tracker} />
 
     {#if tracker.current?.tracking}
@@ -79,7 +70,7 @@
       </section>
     {/if}
 
-    <MatchList {matches} loading={loadingMatches} onOpen={(id) => (openId = id)} />
+    <MatchList onOpen={(id) => (openId = id)} />
 
     <footer class="muted">
       <div>Matches <code>{app.matchesDir}</code></div>
@@ -87,6 +78,7 @@
       <div>Settings <code>{app.settingsFile}</code> · Logs <code>{app.logDir}</code></div>
       <div>Closing this window leaves Downplayed running in the tray.</div>
     </footer>
+    </div>
   {/if}
 </main>
 
