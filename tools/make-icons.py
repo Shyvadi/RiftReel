@@ -1,12 +1,15 @@
 """Draws RiftReel's icon set into src-tauri/icons (original artwork).
 
-The mark: a bold white "R" whose counter is a play button, on a rounded tile that runs
-from teal to blue. At 20 px and under, where the letter would blur, the tile carries
-just the play button, and so does the tray icon (tray.png). Everything is drawn at 4x and scaled down, so edges stay clean.
+The mark: a white dragon's head in profile, horns swept back, whose eye is a play
+button, on a rounded tile that runs from teal to blue. The same mark is used at every
+size, the tray icon (tray.png) included. Everything is drawn at 4x and scaled down, so
+edges stay clean. src-tauri/icons/source.svg and ui/src/lib/Logo.svelte draw the same
+paths.
 
 usage: python tools/make-icons.py   (needs Pillow)
 """
 import io
+import re
 import struct
 from pathlib import Path
 
@@ -17,6 +20,19 @@ SIZE = 1024
 SUPER = 4
 TEAL = (20, 184, 166)
 BLUE = (37, 99, 235)
+
+# The head, from the brow along the snout, the mouth (with a fang), the jaw and its
+# spike, the frill, and the two horns. SVG path data on the 1024 grid.
+HEAD = (
+    "M517 430 L572 417 C617 435 657 465 697 490 C727 505 752 513 787 513 L832 575 "
+    "L782 583.6 L767 611 L752 588.8 L647 607 L802 625 C777 655 737 675 697 685 "
+    "C637 703 577 715 557 715 L417 725 L287 800 L377 675 L252 645 L362 595 L242 540 "
+    "L347 505 C297 475 237 435 192 375 C267 385 347 405 397 440 "
+    "C372 365 327 285 282 220 C377 250 467 325 502 420 Z"
+)
+NOSTRIL = "M757 535 C767 529 777 529 787 535 C777 541 767 541 757 535 Z"
+# The eye: a play button, with round corners of radius 12.
+EYE = [(542, 465), (542, 550), (615, 507)]
 
 
 def tile(scale):
@@ -52,47 +68,33 @@ def rounded_triangle(draw, points, radius, scale):
         draw.ellipse([x - r, y - r, x + r, y + r], fill=255)
 
 
-def letter(scale):
-    """The white R with its play-button counter, as an alpha mask."""
+def outline(path, scale):
+    """The points of one closed SVG path of absolute M, L and C commands, curves sampled."""
+    points = []
+    for command, args in re.findall(r"([MLCZ])([^MLCZ]*)", path):
+        values = [float(v) * scale for v in args.split()]
+        if command in "ML":
+            points += zip(values[0::2], values[1::2])
+        elif command == "C":
+            for i in range(0, len(values), 6):
+                (x0, y0), (x1, y1, x2, y2, x3, y3) = points[-1], values[i : i + 6]
+                for step in range(1, 33):
+                    t = step / 32
+                    a, b, c, d = (1 - t) ** 3, 3 * (1 - t) ** 2 * t, 3 * (1 - t) * t * t, t**3
+                    points.append((a * x0 + b * x1 + c * x2 + d * x3, a * y0 + b * y1 + c * y2 + d * y3))
+    return points
+
+
+def dragon(scale):
+    """The white dragon's head with its play-button eye, as an alpha mask."""
     n = SIZE * scale
-    s = scale
-    stem_left, stem_right, top, bottom = 275, 410, 263, 761
-    centre_x, radius = 541, 172
-    bowl_bottom = top + 2 * radius
     mask = Image.new("L", (n, n), 0)
     draw = ImageDraw.Draw(mask)
-    # The stem, round on the left only.
-    draw.rounded_rectangle(
-        [stem_left * s, top * s, stem_right * s, bottom * s],
-        radius=49 * s,
-        fill=255,
-        corners=(True, False, False, True),
-    )
-    # The leg, from inside the bowl down to the right.
-    leg = [(454, 560), (612, 560), (741, 761), (583, 761)]
-    draw.polygon([(x * s, y * s) for x, y in leg], fill=255)
-    # The bowl: a bar from the stem that ends in the right half of a disc.
-    bowl = Image.new("L", (n, n), 0)
-    ImageDraw.Draw(bowl).ellipse(
-        [(centre_x - radius) * s, top * s, (centre_x + radius) * s, bowl_bottom * s], fill=255
-    )
-    ImageDraw.Draw(bowl).rectangle([0, 0, centre_x * s, n], fill=0)
-    ImageDraw.Draw(bowl).rectangle(
-        [stem_right * s, top * s, centre_x * s, bowl_bottom * s], fill=255
-    )
-    mask = ImageChops.lighter(mask, bowl)
-    # The counter: a play button.
-    hole = Image.new("L", (n, n), 0)
-    rounded_triangle(ImageDraw.Draw(hole), [(430, 356), (430, 514), (567, 435)], 22, s)
-    return ImageChops.subtract(mask, hole)
-
-
-def play(scale):
-    """A white play button alone, for the smallest sizes."""
-    n = SIZE * scale
-    mask = Image.new("L", (n, n), 0)
-    rounded_triangle(ImageDraw.Draw(mask), [(358, 257), (358, 767), (810, 512)], 46, scale)
-    return mask
+    draw.polygon(outline(HEAD, scale), fill=255)
+    draw.polygon(outline(NOSTRIL, scale), fill=0)
+    eye = Image.new("L", (n, n), 0)
+    rounded_triangle(ImageDraw.Draw(eye), EYE, 12, scale)
+    return ImageChops.subtract(mask, eye)
 
 
 def compose(glyph):
@@ -109,13 +111,11 @@ def compose(glyph):
     return Image.alpha_composite(base, white)
 
 
-FULL = compose(letter(SUPER))
-SMALL = compose(play(SUPER))
+FULL = compose(dragon(SUPER))
 
 
 def render(size):
-    source = SMALL if size <= 20 else FULL
-    return source.resize((size, size), Image.Resampling.LANCZOS)
+    return FULL.resize((size, size), Image.Resampling.LANCZOS)
 
 
 def png(size):
@@ -154,15 +154,13 @@ def main():
         "Square284x284Logo.png": 284,
         "Square310x310Logo.png": 310,
         "StoreLogo.png": 50,
+        # The tray icon, shown at 16 to 32 px.
+        "tray.png": 32,
     }
     for name, size in outputs.items():
         (ICONS / name).write_bytes(png(size))
-    # The tray icon: the play button alone, which stays sharp at 16 px.
-    tray = io.BytesIO()
-    SMALL.resize((32, 32), Image.Resampling.LANCZOS).save(tray, "PNG", optimize=True)
-    (ICONS / "tray.png").write_bytes(tray.getvalue())
     write_ico(ICONS / "icon.ico", [16, 20, 24, 32, 40, 48, 64, 128, 256])
-    print(f"wrote {len(outputs) + 2} icons to {ICONS}")
+    print(f"wrote {len(outputs) + 1} icons to {ICONS}")
 
 
 if __name__ == "__main__":

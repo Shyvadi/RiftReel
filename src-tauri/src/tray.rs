@@ -50,7 +50,7 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
                 show_main_window(tray.app_handle());
             }
         });
-    // The play button alone: at tray size the app icon's letter would blur.
+    // The app icon's mark, drawn at 32 px for the tray.
     match Image::from_bytes(include_bytes!("../icons/tray.png")) {
         Ok(icon) => tray = tray.icon(icon),
         Err(_) => {

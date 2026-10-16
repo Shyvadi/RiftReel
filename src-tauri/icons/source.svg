@@ -1,21 +1,26 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
-  <!-- RiftReel mark: a bold "R" whose counter is a play button, on a teal-to-blue tile.
+  <!-- RiftReel mark: a dragon's head whose eye is a play button, on a teal-to-blue tile.
        Original artwork; tools/make-icons.py draws the PNG and ICO sizes from the same
-       geometry (with the play button alone at 20 px and under). -->
+       paths. -->
   <defs>
     <linearGradient id="tile" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0" stop-color="#14b8a6"/>
       <stop offset="1" stop-color="#2563eb"/>
     </linearGradient>
-    <mask id="counter">
+    <mask id="eye">
       <rect width="1024" height="1024" fill="#fff"/>
-      <polygon points="452,394 452,476 523,435" fill="#000" stroke="#000" stroke-width="44" stroke-linejoin="round"/>
+      <polygon points="554,486 554,529 591,507" fill="#000" stroke="#000" stroke-width="24" stroke-linejoin="round"/>
     </mask>
     <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
       <feDropShadow dx="0" dy="12" stdDeviation="14" flood-color="#081830" flood-opacity="0.35"/>
     </filter>
   </defs>
   <rect x="48" y="48" width="928" height="928" rx="208" fill="url(#tile)"/>
-  <path d="M324 263 H541 A172 172 0 0 1 627.3 583.8 L741 761 H583 L484.2 607 H410 V761 H324 A49 49 0 0 1 275 712 V312 A49 49 0 0 1 324 263 Z"
-        fill="#fff" mask="url(#counter)" filter="url(#shadow)"/>
+  <path d="M517 430 L572 417 C617 435 657 465 697 490 C727 505 752 513 787 513 L832 575
+           L782 583.6 L767 611 L752 588.8 L647 607 L802 625 C777 655 737 675 697 685
+           C637 703 577 715 557 715 L417 725 L287 800 L377 675 L252 645 L362 595 L242 540
+           L347 505 C297 475 237 435 192 375 C267 385 347 405 397 440
+           C372 365 327 285 282 220 C377 250 467 325 502 420 Z
+           M757 535 C767 529 777 529 787 535 C777 541 767 541 757 535 Z"
+        fill="#fff" fill-rule="evenodd" mask="url(#eye)" filter="url(#shadow)"/>
 </svg>
