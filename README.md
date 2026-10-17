@@ -37,6 +37,16 @@ Docs 02 and 03 cite "doc 01", a reverse-engineering report of Outplayed that thi
 repository doesn't publish. RiftReel is built from those functional specs and Riot's
 public interfaces, never from Outplayed's code or assets (blueprint §11).
 
+## Install
+
+Download `RiftReel_<version>_x64-setup.exe` from the
+[latest release](https://github.com/Shyvadi/RiftReel/releases/latest) and run it
+(Windows 10 or 11, 64-bit). It installs for your Windows user, with no administrator
+rights, into `%LOCALAPPDATA%\Programs\RiftReel`, with a **RiftReel** Start menu entry, and
+fetches Microsoft's WebView2 runtime if Windows lacks it. The installer isn't code-signed
+yet, so SmartScreen may warn: **More info → Run anyway**. Uninstalling (Settings → Apps)
+removes the program and keeps your matches and settings.
+
 ## Building
 
 Prerequisites: Rust (the pinned 1.90.0 toolchain installs itself through
