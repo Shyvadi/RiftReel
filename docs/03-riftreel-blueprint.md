@@ -369,7 +369,8 @@ fills the rest. Type starts at 16 px, controls are 40 px tall, and icons are lin
 drawings of RiftReel's own. The app icon (`tools/make-icons.py`, which also writes
 `icons/source.svg` and the logo's paths) is a bold black R, built from a stem, a bowl
 of two concentric half circles and a straight leg, on a red tile, at every size down to
-the tray's.
+the tray's. The window matches it: black, with red for actions and focus, whatever
+Windows' own theme (title bar included).
 
 1. **Matches:** cards with champion icon, queue, W/L, K/D/A, duration and date.
    Filters for champion, queue, result and has-multikill.

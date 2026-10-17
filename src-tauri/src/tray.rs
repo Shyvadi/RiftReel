@@ -90,8 +90,9 @@ pub fn show_match(app: &AppHandle, id: &str) -> bool {
 }
 
 /// Creates the window, centred, as big as its default or nine tenths of the screen
-/// (Ctrl + / Ctrl - zoom it). Invisible windows exist for smoke tests (the page still
-/// loads).
+/// (Ctrl + / Ctrl - zoom it), dark like its page (title bar included, and no white
+/// flash before the page paints). Invisible windows exist for smoke tests (the page
+/// still loads).
 pub fn create_main_window(app: &AppHandle, visible: bool) {
     let (mut width, mut height) = (1360.0, 880.0);
     if let Ok(Some(monitor)) = app.primary_monitor() {
@@ -106,6 +107,8 @@ pub fn create_main_window(app: &AppHandle, visible: bool) {
             .min_inner_size(960.0, 600.0)
             .center()
             .zoom_hotkeys_enabled(true)
+            .theme(Some(tauri::Theme::Dark))
+            .background_color(tauri::webview::Color(10, 10, 11, 255))
             .visible(visible);
     // A development home keeps its own WebView2 data: WebView2 refuses a second process on
     // the real one's folder with other options (a DevTools port, say).

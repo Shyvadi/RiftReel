@@ -141,59 +141,35 @@
   :global(*, *::before, *::after) {
     box-sizing: border-box;
   }
+  /* Red and black, like the icon: one dark theme, whatever Windows' own is. */
   :global(:root) {
-    --bg: #eef1f5;
-    --sidebar: #e3e8ef;
-    --card: #ffffff;
-    --raised: #f4f6f9;
-    --hover: #e7ebf1;
-    --text: #111827;
-    --muted: #5d687a;
-    --line: #d5dbe4;
-    --accent: #0d9488;
-    --accent-hover: #0f766e;
-    --accent-soft: rgba(13, 148, 136, 0.13);
-    --on-accent: #ffffff;
-    --on-strong: #ffffff;
-    --win: #15803d;
-    --lose: #c62828;
-    --warn: #b45309;
-    --fight: #d92d2d;
-    --objective: #7c3aed;
-    --assist: #2563eb;
-    --death: #6b7280;
+    --bg: #0a0a0b;
+    --sidebar: #101012;
+    --card: #17171a;
+    --raised: #1f1f23;
+    --hover: #28282d;
+    --text: #f1f1f3;
+    --muted: #a3a3ad;
+    --line: #2c2c31;
+    --accent: #ef4444;
+    --accent-hover: #f87171;
+    --accent-soft: rgba(239, 68, 68, 0.16);
+    --on-accent: #0a0a0b;
+    --on-strong: #0a0a0b;
+    --win: #34d399;
+    --lose: #f87171;
+    --warn: #fbbf24;
+    --fight: #f87171;
+    --objective: #a78bfa;
+    --assist: #60a5fa;
+    --death: #9ca3af;
     --radius: 14px;
     --radius-sm: 10px;
-    --shadow: 0 1px 2px rgba(15, 23, 42, 0.05), 0 6px 20px rgba(15, 23, 42, 0.06);
-    color-scheme: light dark;
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 10px 28px rgba(0, 0, 0, 0.3);
+    color-scheme: dark;
     font-family: 'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif;
     font-size: 16px;
     line-height: 1.45;
-  }
-  @media (prefers-color-scheme: dark) {
-    :global(:root) {
-      --bg: #0b1018;
-      --sidebar: #0f151f;
-      --card: #151c28;
-      --raised: #1b2433;
-      --hover: #222d3e;
-      --text: #e9eef6;
-      --muted: #97a2b5;
-      --line: #273244;
-      --accent: #2dd4bf;
-      --accent-hover: #5eead4;
-      --accent-soft: rgba(45, 212, 191, 0.15);
-      --on-accent: #042f2e;
-      --on-strong: #06110f;
-      --win: #34d399;
-      --lose: #f87171;
-      --warn: #fbbf24;
-      --fight: #f87171;
-      --objective: #a78bfa;
-      --assist: #60a5fa;
-      --death: #9ca3af;
-      --shadow: 0 1px 2px rgba(0, 0, 0, 0.35), 0 10px 28px rgba(0, 0, 0, 0.25);
-    }
   }
   :global(body) {
     margin: 0;
