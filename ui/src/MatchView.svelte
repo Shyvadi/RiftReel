@@ -3,7 +3,8 @@
   import { category, clock, kda, when, words } from './lib/format.js';
   import Icon from './lib/Icon.svelte';
 
-  let { id, onBack } = $props();
+  /** `backLabel`: what the way back is called (the page it goes back to). */
+  let { id, onBack, backLabel = 'All matches' } = $props();
 
   let match = $state(null);
   let error = $state('');
@@ -293,7 +294,7 @@
 </script>
 
 <div class="topbar">
-  <button type="button" class="btn ghost" onclick={onBack}><Icon name="back" /> All matches</button>
+  <button type="button" class="btn ghost" onclick={onBack}><Icon name="back" /> {backLabel}</button>
 </div>
 
 {#if error}

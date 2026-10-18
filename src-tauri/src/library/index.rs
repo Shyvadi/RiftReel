@@ -13,7 +13,7 @@ use rusqlite::{params, params_from_iter, Connection, OptionalExtension, ToSql};
 use serde::{Deserialize, Serialize};
 
 /// Bumped when the tables change: an index of another schema is rebuilt.
-const SCHEMA: i64 = 1;
+const SCHEMA: i64 = 2;
 
 const TABLES: &str = "
 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -47,6 +47,7 @@ CREATE TABLE clips (
     from_s REAL NOT NULL,
     to_s REAL NOT NULL,
     favorite INTEGER NOT NULL,
+    thumbnail TEXT,
     PRIMARY KEY (match_id, file)
 );
 ";
@@ -127,6 +128,39 @@ pub struct ClipEntry {
     pub from_s: f64,
     pub to_s: f64,
     pub favorite: bool,
+    /// Its picture, inside the match's folder, once made.
+    pub thumbnail: Option<String>,
+}
+
+/// A clip as the clips page lists it, with the match it was cut from.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ClipRow {
+    pub match_id: String,
+    pub file: String,
+    pub label: String,
+    pub from_s: f64,
+    pub to_s: f64,
+    pub favorite: bool,
+    pub thumbnail: Option<String>,
+    pub when_ms: i64,
+    pub champion: Option<String>,
+    pub queue: Option<String>,
+    pub game_mode: Option<String>,
+    pub result: Option<String>,
+}
+
+/// What the clips page asks for: a page of every match's clips, filtered and sorted.
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ClipQuery {
+    pub offset: u32,
+    /// Clips per page; 0 for the default.
+    pub limit: u32,
+    pub champion: Option<String>,
+    /// Favorites only.
+    pub favorites: bool,
+    /// `true`: the oldest matches' clips first.
+    pub oldest: bool,
 }
 
 /// A row of a query: an entry without its clips.
@@ -333,8 +367,9 @@ impl Index {
                     ?17, ?18, ?19, ?20)",
             )?;
             let mut put_clip = tx.prepare_cached(
-                "INSERT OR REPLACE INTO clips (match_id, file, label, from_s, to_s, favorite)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                "INSERT OR REPLACE INTO clips (match_id, file, label, from_s, to_s, favorite,
+                    thumbnail)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             )?;
             for entry in entries {
                 drop_clips.execute([&entry.id])?;
@@ -368,7 +403,8 @@ impl Index {
                         clip.label,
                         clip.from_s,
                         clip.to_s,
-                        clip.favorite
+                        clip.favorite,
+                        clip.thumbnail
                     ])?;
                 }
             }
@@ -444,6 +480,67 @@ impl Index {
                     favorite_clips: row.get(14)?,
                     video: row.get(15)?,
                     thumbnail: row.get(16)?,
+                })
+            })?;
+        let rows = rows.collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok((u64::try_from(total).unwrap_or_default(), rows))
+    }
+
+    /// A page of clips, every match's: how many pass the filters in all, and those from
+    /// `offset`, newest matches first (or oldest), each match's in the order they were cut.
+    pub fn clips(&self, query: &ClipQuery) -> rusqlite::Result<(u64, Vec<ClipRow>)> {
+        let mut clauses = Vec::new();
+        let mut values: Vec<Box<dyn ToSql>> = Vec::new();
+        if let Some(champion) = query.champion.as_ref().filter(|c| !c.is_empty()) {
+            clauses.push("m.champion = ?");
+            values.push(Box::new(champion.clone()));
+        }
+        if query.favorites {
+            clauses.push("c.favorite");
+        }
+        let filter = if clauses.is_empty() {
+            String::new()
+        } else {
+            format!(" WHERE {}", clauses.join(" AND "))
+        };
+        let conn = self.conn();
+        let total: i64 = conn.query_row(
+            &format!("SELECT count(*) FROM clips c JOIN matches m ON m.id = c.match_id{filter}"),
+            params_from_iter(values.iter().map(|v| v.as_ref())),
+            |row| row.get(0),
+        )?;
+        let limit = match query.limit {
+            0 => DEFAULT_LIMIT,
+            limit => limit.min(MAX_LIMIT),
+        };
+        let order = if query.oldest {
+            "m.when_ms ASC, m.id ASC, c.file ASC"
+        } else {
+            "m.when_ms DESC, m.id DESC, c.file DESC"
+        };
+        let sql = format!(
+            "SELECT c.match_id, c.file, c.label, c.from_s, c.to_s, c.favorite, c.thumbnail,
+                m.when_ms, m.champion, m.queue, m.game_mode, m.result
+             FROM clips c JOIN matches m ON m.id = c.match_id{filter}
+             ORDER BY {order} LIMIT {limit} OFFSET {}",
+            query.offset
+        );
+        let mut statement = conn.prepare(&sql)?;
+        let rows =
+            statement.query_map(params_from_iter(values.iter().map(|v| v.as_ref())), |row| {
+                Ok(ClipRow {
+                    match_id: row.get(0)?,
+                    file: row.get(1)?,
+                    label: row.get(2)?,
+                    from_s: row.get(3)?,
+                    to_s: row.get(4)?,
+                    favorite: row.get(5)?,
+                    thumbnail: row.get(6)?,
+                    when_ms: row.get(7)?,
+                    champion: row.get(8)?,
+                    queue: row.get(9)?,
+                    game_mode: row.get(10)?,
+                    result: row.get(11)?,
                 })
             })?;
         let rows = rows.collect::<rusqlite::Result<Vec<_>>>()?;

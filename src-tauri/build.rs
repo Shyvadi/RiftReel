@@ -4,6 +4,7 @@ fn main() {
     let manifest = tauri_build::AppManifest::new().commands(&[
         "get_status",
         "list_matches",
+        "list_clips",
         "match_filters",
         "request_thumbnails",
         "get_match",

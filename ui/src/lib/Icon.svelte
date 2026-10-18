@@ -26,6 +26,8 @@
     <circle cx="13.5" cy="16" r="0.6" fill="currentColor" />
   {:else if name === 'back'}
     <path d="M15 5l-7 7 7 7" />
+  {:else if name === 'next'}
+    <path d="M9 5l7 7-7 7" />
   {:else if name === 'play'}
     <path d="M8 5.5v13l10.5-6.5z" fill="currentColor" />
   {:else if name === 'scissors'}

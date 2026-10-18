@@ -26,8 +26,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use serde::Serialize;
 use serde_json::{Map, Value};
 
-use index::{ClipEntry, Entry, Index, Row, Stamp};
-pub use index::{Facets, MatchQuery, Opened, Sort, Source};
+use index::{ClipEntry, ClipRow, Entry, Index, Row, Stamp};
+pub use index::{ClipQuery, Facets, MatchQuery, Opened, Sort, Source};
 
 use crate::capture::clips::{
     clip_label, plan_span, Clip, ClipPlan, CLIPS_DIR, KEYFRAME_S, THUMBS_DIR,
@@ -93,6 +93,39 @@ pub struct MatchPage {
     pub total: u64,
     pub offset: u32,
     pub items: Vec<MatchCard>,
+}
+
+/// A clip as the clips page shows it, with what it shows of the match it was cut from.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClipCard {
+    /// The match it was cut from (its folder name).
+    pub match_id: String,
+    pub file: String,
+    pub label: String,
+    pub from_s: f64,
+    pub to_s: f64,
+    pub favorite: bool,
+    pub when_ms: u64,
+    pub champion: Option<String>,
+    pub queue: Option<String>,
+    pub game_mode: Option<String>,
+    pub result: Option<String>,
+    /// The clip and its picture, full paths for the asset protocol, where they are.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thumbnail_path: Option<String>,
+}
+
+/// A page of clips.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClipPage {
+    /// How many clips pass the filters, in all.
+    pub total: u64,
+    pub offset: u32,
+    pub items: Vec<ClipCard>,
 }
 
 /// What a sync of the index did.
@@ -339,6 +372,41 @@ impl Library {
             offset: query.offset,
             items: rows.into_iter().map(|row| self.card(row)).collect(),
         })
+    }
+
+    /// A page of every match's clips, as the clips page asks for it.
+    pub fn clips(&self, query: &ClipQuery) -> io::Result<ClipPage> {
+        if query.offset == 0 {
+            self.sync_if_older(QUERY_SYNC_AGE);
+        }
+        let (total, rows) = self.index.clips(query).map_err(io::Error::other)?;
+        Ok(ClipPage {
+            total,
+            offset: query.offset,
+            items: rows.into_iter().map(|row| self.clip_card(row)).collect(),
+        })
+    }
+
+    fn clip_card(&self, row: ClipRow) -> ClipCard {
+        let dir = self.matches_dir.join(&row.match_id);
+        let full = |folder: &str, file: &str| {
+            member_file(&dir, folder, file).map(|path| path.display().to_string())
+        };
+        ClipCard {
+            path: full(CLIPS_DIR, &row.file),
+            thumbnail_path: row.thumbnail.as_deref().and_then(|file| full(THUMBS_DIR, file)),
+            match_id: row.match_id,
+            file: row.file,
+            label: row.label,
+            from_s: row.from_s,
+            to_s: row.to_s,
+            favorite: row.favorite,
+            when_ms: u64::try_from(row.when_ms).unwrap_or_default(),
+            champion: row.champion,
+            queue: row.queue,
+            game_mode: row.game_mode,
+            result: row.result,
+        }
     }
 
     /// The champions and queues the filters can offer.
@@ -690,6 +758,7 @@ fn game_entry(id: &str, dir: &Path, summary: &Value, stamp: Stamp) -> Entry {
                 from_s: clip["fromS"].as_f64().unwrap_or_default(),
                 to_s: clip["toS"].as_f64().unwrap_or_default(),
                 favorite: clip["favorite"].as_bool().unwrap_or_default(),
+                thumbnail: clip["thumbnail"].as_str().map(str::to_owned),
             })
         })
         .collect();
@@ -1214,6 +1283,66 @@ mod tests {
         assert_eq!(library.clip_file("m1", "clips/0001_kill.mp4"), Some(clip));
         assert_eq!(library.clip_file("m1", "clips/../../secret/x.mp4"), None);
         assert_eq!(library.clip_file("m1", "clips/unlisted.mp4"), None);
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn the_clips_page_lists_every_matchs_clips_newest_first() {
+        let root = temp_dir("clippage");
+        let matches = root.join("matches");
+        // Two clips, the first a favorite; no files on disk.
+        write_match(&matches, "old", 1_000, "Ahri", None, Some("win"), 5, 600.0, &[], 2, true);
+        write_match(&matches, "none", 1_500, "Zed", None, None, 1, 600.0, &[], 0, true);
+        // The newest match's clip has its file and picture.
+        let dir = matches.join("new");
+        std::fs::create_dir_all(dir.join(CLIPS_DIR)).unwrap();
+        std::fs::create_dir_all(dir.join(THUMBS_DIR)).unwrap();
+        std::fs::write(dir.join(CLIPS_DIR).join("0001_double_kill.mp4"), b"clip").unwrap();
+        std::fs::write(dir.join(THUMBS_DIR).join("0001.jpg"), b"jpg").unwrap();
+        let json = serde_json::json!({ "schema": 1, "id": "new", "startedWallMs": 2_000,
+            "champion": "Shyvana", "clips": [{ "file": "clips/0001_double_kill.mp4",
+            "fromS": 50, "toS": 70, "label": "double_kill", "thumbnail": "thumbs/0001.jpg" }] });
+        std::fs::write(dir.join(MATCH_FILE), json.to_string()).unwrap();
+        let library = Library::new(matches, root.join("recordings"), SessionConfig::default());
+
+        let page = library.clips(&ClipQuery::default()).unwrap();
+        assert_eq!(page.total, 3);
+        let listed: Vec<(&str, &str)> = page
+            .items
+            .iter()
+            .map(|clip| (clip.match_id.as_str(), clip.file.as_str()))
+            .collect();
+        assert_eq!(
+            listed,
+            [
+                ("new", "clips/0001_double_kill.mp4"),
+                ("old", "clips/0002_kill.mp4"),
+                ("old", "clips/0001_kill.mp4")
+            ]
+        );
+        let newest = &page.items[0];
+        assert_eq!(newest.champion.as_deref(), Some("Shyvana"));
+        assert_eq!((newest.label.as_str(), newest.from_s, newest.to_s), ("double_kill", 50.0, 70.0));
+        let path = |folder: &str, file: &str| Some(dir.join(folder).join(file).display().to_string());
+        assert_eq!(newest.path, path(CLIPS_DIR, "0001_double_kill.mp4"));
+        assert_eq!(newest.thumbnail_path, path(THUMBS_DIR, "0001.jpg"));
+        assert!(page.items[1].path.is_none(), "its file isn't there");
+
+        let oldest = ClipQuery { oldest: true, ..ClipQuery::default() };
+        assert_eq!(library.clips(&oldest).unwrap().items[0].file, "clips/0001_kill.mp4");
+        let favorites = library
+            .clips(&ClipQuery { favorites: true, ..ClipQuery::default() })
+            .unwrap();
+        assert_eq!((favorites.total, favorites.items[0].match_id.as_str()), (1, "old"));
+        let ahri = ClipQuery { champion: Some("Ahri".into()), ..ClipQuery::default() };
+        assert_eq!(library.clips(&ahri).unwrap().total, 2);
+        let second = library
+            .clips(&ClipQuery { offset: 1, limit: 1, ..ClipQuery::default() })
+            .unwrap();
+        assert_eq!(
+            (second.total, second.items.len(), second.items[0].file.as_str()),
+            (3, 1, "clips/0002_kill.mp4")
+        );
         std::fs::remove_dir_all(&root).ok();
     }
 

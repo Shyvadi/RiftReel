@@ -5,6 +5,7 @@
   import StatusPanel from './StatusPanel.svelte';
   import MatchList from './MatchList.svelte';
   import MatchView from './MatchView.svelte';
+  import ClipsView from './ClipsView.svelte';
   import StorageView from './StorageView.svelte';
   import Icon from './lib/Icon.svelte';
   import Logo from './lib/Logo.svelte';
@@ -14,7 +15,7 @@
   let error = $state('');
   /** The match under review, or null for the page below. */
   let openId = $state(null);
-  /** 'matches' (the list) or 'storage'. */
+  /** 'matches' (the list), 'clips' or 'storage'. */
   let page = $state('matches');
   const go = (next) => {
     openId = null;
@@ -45,8 +46,11 @@
 
   const pages = [
     { key: 'matches', label: 'Matches', icon: 'matches' },
+    { key: 'clips', label: 'Clips', icon: 'scissors' },
     { key: 'storage', label: 'Storage', icon: 'storage' },
   ];
+  /** A review's way back, named after the page it goes back to. */
+  const backLabels = { matches: 'All matches', clips: 'All clips', storage: 'Storage' };
 </script>
 
 <div class="shell">
@@ -92,7 +96,12 @@
 
     {#if openId}
       <div class="page">
-        <MatchView id={openId} onBack={() => (openId = null)} />
+        <MatchView id={openId} backLabel={backLabels[page]} onBack={() => (openId = null)} />
+      </div>
+    {/if}
+    {#if app && page === 'clips'}
+      <div class="page" hidden={!!openId}>
+        <ClipsView active={!openId} onOpen={(id) => (openId = id)} />
       </div>
     {/if}
     {#if app && page === 'storage'}

@@ -20,7 +20,7 @@ use crate::league::client::scan_processes;
 use crate::league::live::LiveClient;
 use crate::library::janitor::{Overview, RunReport};
 use crate::library::outplayed::{Import, Survey, LEAGUE_DIR};
-use crate::library::{Facets, Library, MatchPage, MatchQuery, Removal};
+use crate::library::{ClipPage, ClipQuery, Facets, Library, MatchPage, MatchQuery, Removal};
 use crate::logging;
 use crate::settings::{AppPaths, LoadOutcome, Settings, SettingsError, StorageSettings};
 use crate::shell;
@@ -161,6 +161,20 @@ async fn list_matches(
     let library = state.library.clone();
     let query = query.unwrap_or_default();
     tauri::async_runtime::spawn_blocking(move || library.query(&query))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())
+}
+
+/// A page of every match's clips, newest matches first by default.
+#[tauri::command]
+async fn list_clips(
+    query: Option<ClipQuery>,
+    state: tauri::State<'_, AppState>,
+) -> Result<ClipPage, String> {
+    let library = state.library.clone();
+    let query = query.unwrap_or_default();
+    tauri::async_runtime::spawn_blocking(move || library.clips(&query))
         .await
         .map_err(|e| e.to_string())?
         .map_err(|e| e.to_string())
@@ -759,6 +773,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_status,
             list_matches,
+            list_clips,
             match_filters,
             request_thumbnails,
             get_match,
