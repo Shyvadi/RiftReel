@@ -407,8 +407,7 @@ async fn run_live(flags: &Flags) -> Result<(), String> {
 /// Indexes the library (`RIFTREEL_HOME`, or the real one) and times it: the sync, then
 /// a few list queries. `--cold` deletes the index first (it's a cache of the folders).
 fn run_library(flags: &Flags) -> Result<(), String> {
-    let paths = AppPaths::resolve();
-    let settings = load_settings(&paths);
+    let (paths, settings) = app_paths();
     let index = paths
         .matches_dir
         .parent()
@@ -494,8 +493,7 @@ fn run_library(flags: &Flags) -> Result<(), String> {
 
 /// The cleanup's dry run: nothing is recycled or written.
 fn run_cleanup() -> Result<(), String> {
-    let paths = AppPaths::resolve();
-    let settings = load_settings(&paths);
+    let (paths, settings) = app_paths();
     let storage = &settings.storage;
     let library = Library::new(
         paths.matches_dir.clone(),
@@ -572,8 +570,7 @@ fn run_outplayed(flags: &Flags) -> Result<(), String> {
             .first()
             .ok_or("outplayed needs the Outplayed folder, like D:\\Outplayed")?,
     );
-    let paths = AppPaths::resolve();
-    let settings = load_settings(&paths);
+    let (paths, settings) = app_paths();
     let library = Library::new(
         paths.matches_dir.clone(),
         paths.recordings_dir.clone(),
@@ -636,9 +633,20 @@ fn load_settings(paths: &AppPaths) -> Settings {
     settings
 }
 
-async fn run_probe(flags: &Flags) -> Result<(), String> {
+/// The app's paths and settings, with the library where `[storage] library_dir` puts it.
+fn app_paths() -> (AppPaths, Settings) {
     let paths = AppPaths::resolve();
-    let config = load_settings(&paths).capture_config(&paths);
+    let settings = load_settings(&paths);
+    let (paths, problem) = paths.with_library_dir(&settings.storage.library_dir);
+    if let Some(problem) = problem {
+        eprintln!("settings: {problem}");
+    }
+    (paths, settings)
+}
+
+async fn run_probe(flags: &Flags) -> Result<(), String> {
+    let (paths, settings) = app_paths();
+    let config = settings.capture_config(&paths);
     let ffmpeg = ffmpeg::locate(config.ffmpeg.as_deref())
         .ok_or("ffmpeg not found: run tools/fetch-ffmpeg.ps1 or set [capture] ffmpeg_path")?;
     println!("ffmpeg {}", ffmpeg.display());

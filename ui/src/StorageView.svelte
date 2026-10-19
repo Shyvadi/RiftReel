@@ -473,6 +473,14 @@
   <section class="card">
     <h2>Folders</h2>
     <dl class="folders">
+      <dt>Library</dt>
+      <dd>
+        <code>{folders.library}</code>
+        <span class="muted small hint"
+          >The matches, their videos and clips, and the library's index. To keep it elsewhere, quit RiftReel, move the
+          folder, and set <code>library_dir</code> under <code>[storage]</code> in the settings file.</span
+        >
+      </dd>
       <dt>Matches</dt>
       <dd><code>{folders.matches}</code></dd>
       <dt>Recordings</dt>
@@ -679,6 +687,10 @@
   }
   .folders dt {
     color: var(--muted);
+  }
+  .hint {
+    display: block;
+    margin-top: 4px;
   }
   .folders dd {
     margin: 0;

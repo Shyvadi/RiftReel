@@ -327,6 +327,13 @@ in 2.8 s.
 
 ## 8. Storage management
 
+- **Where the library lives:** `%LOCALAPPDATA%\RiftReel\library` unless
+  `[storage] library_dir` names a folder on a local fixed drive (made if missing;
+  otherwise the default stays and the window says why). Everything the library holds
+  goes there: the match folders with their videos, clips and thumbnails, `library.db`,
+  `imports.json` and `cleanup.json`, so the free-space guard and the cleanup watch that
+  drive. Settings, logs and the WebView2 profile stay in AppData.
+
 - **The cleanup (janitor) is off until the user turns it on** (the Storage view, or
   `[storage] cleanup = true`). Full-match videos older than `keep_days` (30) go, then the
   oldest while the full matches take more than `full_matches_gb` (150 GB). Favorites

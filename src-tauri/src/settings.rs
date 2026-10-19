@@ -37,7 +37,9 @@ const HEADER: &str = "\
 #   library's drive; stop_free_gb: a recording stops (keeping what it has) below this.
 #   cleanup = true sends full-match videos older than keep_days, then the oldest while
 #   they take more than full_matches_gb, to the Recycle Bin (0 = no limit). Clips and
-#   favorites are never removed; clips_warn_gb only warns.
+#   favorites are never removed; clips_warn_gb only warns. library_dir = 'D:\\RiftReel'
+#   keeps the library (matches, videos, clips, its index) there, on a local fixed drive;
+#   empty: under %LOCALAPPDATA%\\RiftReel. Quit RiftReel and move the folder yourself first.
 # [startup]: with_windows = true starts RiftReel in the tray when you sign in to
 #   Windows (the Storage view turns it on and off too).
 # [markers.<type>]: pre_s / post_s are seconds kept before / after the event.
@@ -263,6 +265,10 @@ pub struct StorageSettings {
     pub full_matches_gb: f64,
     /// Clips are never removed; above this (GB) the window warns (0: never).
     pub clips_warn_gb: f64,
+    /// Where the library lives (the match folders with their videos and clips, and the
+    /// library's index): a folder on a local fixed drive. Empty: the default, under the
+    /// data folder. Settings, logs and the window's data stay where they are.
+    pub library_dir: String,
 }
 
 impl Default for StorageSettings {
@@ -274,6 +280,7 @@ impl Default for StorageSettings {
             keep_days: 30,
             full_matches_gb: 150.0,
             clips_warn_gb: 50.0,
+            library_dir: String::new(),
         }
     }
 }
@@ -633,6 +640,8 @@ impl Settings {
 pub struct AppPaths {
     pub settings_file: PathBuf,
     pub log_dir: PathBuf,
+    /// The library: the matches folder, and the index, imports and cleanup notes beside it.
+    pub library_dir: PathBuf,
     /// One folder per finished match, each with its `match.json` (doc 03 §7).
     pub matches_dir: PathBuf,
     /// Where `riftreel-dev record` saves recordings by default; the window lists them.
@@ -643,6 +652,8 @@ pub struct AppPaths {
 
 /// Names one folder for settings, logs, matches and recordings (development, tests).
 pub const HOME_ENV: &str = "RIFTREEL_HOME";
+/// The game's folder in the library: the match folders are in it.
+const GAME_DIR: &str = "League of Legends";
 
 impl AppPaths {
     /// The folder `RIFTREEL_HOME` names, if it is set.
@@ -660,9 +671,7 @@ impl AppPaths {
             return Self::under(home);
         }
         let fallback = || PathBuf::from(".");
-        let config_dir = dirs::config_dir()
-            .unwrap_or_else(fallback)
-            .join("RiftReel");
+        let config_dir = dirs::config_dir().unwrap_or_else(fallback).join("RiftReel");
         let data_dir = dirs::data_local_dir()
             .unwrap_or_else(fallback)
             .join("RiftReel");
@@ -679,11 +688,46 @@ impl AppPaths {
         }
     }
 
+    /// The library at `configured` (`[storage] library_dir`) instead of the default one,
+    /// when it can be used: a full path on a local fixed drive, made if it isn't there.
+    /// Otherwise the default stays, and the second value says why (for the log and the
+    /// window). An empty setting keeps the default.
+    pub fn with_library_dir(mut self, configured: &str) -> (Self, Option<String>) {
+        let configured = configured.trim();
+        if configured.is_empty() {
+            return (self, None);
+        }
+        let dir = PathBuf::from(configured);
+        let usable = if dir.is_absolute() {
+            crate::disk::local_fixed_drive(&dir).and_then(|()| {
+                std::fs::create_dir_all(&dir).map_err(|e| format!("it can't be made: {e}"))
+            })
+        } else {
+            Err("it isn't a full path, like D:\\RiftReel".to_owned())
+        };
+        match usable {
+            Ok(()) => {
+                self.matches_dir = dir.join(GAME_DIR);
+                self.library_dir = dir;
+                (self, None)
+            }
+            Err(why) => {
+                let problem = format!(
+                    "The library folder {configured} can't be used ({why}), so the default one is: {}",
+                    self.library_dir.display()
+                );
+                (self, Some(problem))
+            }
+        }
+    }
+
     fn data_under(data_dir: &Path) -> Self {
+        let library_dir = data_dir.join("library");
         Self {
             settings_file: PathBuf::new(),
             log_dir: data_dir.join("logs"),
-            matches_dir: data_dir.join("library").join("League of Legends"),
+            matches_dir: library_dir.join(GAME_DIR),
+            library_dir,
             recordings_dir: data_dir.join("recordings"),
             capture_probe_file: data_dir.join("capture-probe.json"),
         }
@@ -763,7 +807,9 @@ mod tests {
     #[test]
     fn starting_with_windows_is_off_until_turned_on() {
         assert!(!Settings::default().startup.with_windows);
-        assert!(Settings::default().to_toml().contains("[startup]\nwith_windows = false"));
+        assert!(Settings::default()
+            .to_toml()
+            .contains("[startup]\nwith_windows = false"));
         let settings = Settings::from_toml("[startup]\nwith_windows = true\n").unwrap();
         assert!(settings.startup.with_windows);
     }
@@ -870,6 +916,54 @@ mod tests {
         let mut bad = Settings::from_toml("[storage]\nmin_free_gb = -3\n").unwrap();
         assert_eq!(bad.validate().len(), 1);
         assert_eq!(bad.storage.min_free_gb, 20.0);
+    }
+
+    #[test]
+    fn the_library_can_live_elsewhere_on_a_local_drive() {
+        let defaults = Settings::default();
+        assert_eq!(defaults.storage.library_dir, "");
+        let root = temp_dir("library");
+        let paths = AppPaths::under(root.clone());
+        assert_eq!(paths.library_dir, root.join("library"));
+        assert_eq!(
+            paths.matches_dir,
+            root.join("library").join("League of Legends")
+        );
+
+        // Empty: the default stays.
+        let (same, problem) = paths.clone().with_library_dir("  ");
+        assert_eq!((same, problem), (paths.clone(), None));
+
+        // A folder that isn't there yet is made; the matches go in it.
+        let elsewhere = root.join("elsewhere").join("RiftReel");
+        let settings = Settings::from_toml(&format!(
+            "[storage]\nlibrary_dir = '{}'\n",
+            elsewhere.display()
+        ))
+        .unwrap();
+        let (moved, problem) = paths
+            .clone()
+            .with_library_dir(&settings.storage.library_dir);
+        assert_eq!(problem, None);
+        assert!(elsewhere.is_dir());
+        assert_eq!(moved.library_dir, elsewhere);
+        assert_eq!(moved.matches_dir, elsewhere.join("League of Legends"));
+        assert_eq!(
+            Settings::default().capture_config(&moved).matches_dir,
+            elsewhere.join("League of Legends"),
+            "recordings go there"
+        );
+        assert_eq!(
+            (&moved.settings_file, &moved.log_dir),
+            (&paths.settings_file, &paths.log_dir),
+            "settings and logs stay"
+        );
+
+        // Not a full path: the default stays, and the window is told why.
+        let (kept, problem) = paths.clone().with_library_dir("RiftReel");
+        assert_eq!(kept, paths);
+        assert!(problem.unwrap().contains("isn't a full path"));
+        std::fs::remove_dir_all(&root).ok();
     }
 
     #[test]

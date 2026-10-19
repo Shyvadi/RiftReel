@@ -122,6 +122,8 @@ struct AppStatus {
     tracker: TrackerStatus,
     settings_file: String,
     log_dir: String,
+    /// The library (`[storage] library_dir`, or the default), and its matches folder.
+    library_dir: String,
     matches_dir: String,
     recordings_dir: String,
     /// Open this match's review (set when the window was opened for one).
@@ -137,6 +139,7 @@ fn get_status(state: tauri::State<'_, AppState>) -> AppStatus {
         tracker: state.status.borrow().clone(),
         settings_file: state.paths.settings_file.display().to_string(),
         log_dir: state.paths.log_dir.display().to_string(),
+        library_dir: state.paths.library_dir.display().to_string(),
         matches_dir: state.paths.matches_dir.display().to_string(),
         recordings_dir: state.paths.recordings_dir.display().to_string(),
         open_match: state
@@ -723,6 +726,13 @@ pub fn run() {
     set_app_id();
     let settings_writable = !matches!(loaded.outcome, LoadOutcome::Invalid(_));
     let settings = loaded.settings;
+    // The library may live elsewhere ([storage] library_dir); if that folder can't be
+    // used, the default one is, and the window says so when it opens.
+    let (paths, library_problem) = paths.with_library_dir(&settings.storage.library_dir);
+    match &library_problem {
+        Some(problem) => tracing::warn!("{problem}"),
+        None => tracing::info!(path = %paths.library_dir.display(), "library"),
+    }
     #[cfg(windows)]
     if settings_writable {
         sync_start_with_windows(settings.startup.with_windows);
@@ -762,7 +772,7 @@ pub fn run() {
             paths,
             library: library.clone(),
             review_request: Mutex::new(None),
-            notice: Mutex::new(None),
+            notice: Mutex::new(library_problem),
             ffmpeg: ffmpeg.clone(),
             match_edits: tokio::sync::Mutex::new(()),
             storage: Mutex::new(settings.storage.clone()),

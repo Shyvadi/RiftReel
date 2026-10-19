@@ -108,6 +108,7 @@
       <div class="page" hidden={!!openId}>
         <StorageView
           folders={{
+            library: app.libraryDir,
             matches: app.matchesDir,
             recordings: app.recordingsDir,
             settings: app.settingsFile,

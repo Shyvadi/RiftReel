@@ -129,7 +129,7 @@ times the library index (rebuilt from scratch with `--cold`) and a few list quer
 |---|---|
 | Settings | `%APPDATA%\RiftReel\settings.toml` (created on first run; every value optional) |
 | Logs | `%LOCALAPPDATA%\RiftReel\logs\riftreel.log`, 5 × 5 MB rotation, Riot identifiers scrubbed |
-| Matches | `%LOCALAPPDATA%\RiftReel\library\League of Legends\<date>_<time>_<queue>_<champion>\` (UTC), one folder per tracked match: `match.json`, `match.mp4` when it was recorded, the clips made from it in `clips\` with their thumbnails in `thumbs\`, and its list thumbnail `thumbs\match.jpg` |
+| Matches | `%LOCALAPPDATA%\RiftReel\library\League of Legends\` (or `<library_dir>\League of Legends\`): `<date>_<time>_<queue>_<champion>\` (UTC), one folder per tracked match: `match.json`, `match.mp4` when it was recorded, the clips made from it in `clips\` with their thumbnails in `thumbs\`, and its list thumbnail `thumbs\match.jpg` |
 | Library index | `%LOCALAPPDATA%\RiftReel\library\library.db`: a cache of the match folders' `match.json` files, rebuilt from them if it is lost or damaged |
 | Cleanup notes | `%LOCALAPPDATA%\RiftReel\library\cleanup.json`: videos the cleanup couldn't recycle, and its last run |
 | Imports | `%LOCALAPPDATA%\RiftReel\library\imports.json`: the Outplayed folders imported, and whether the cleanup may remove their videos. Each imported video gets a folder `<date>_<time>_Outplayed[_<champion>]` whose `match.json` points at it |
@@ -155,6 +155,14 @@ source also gets a track of its own.
 free (20), and one stops cleanly, keeping its file, below `stop_free_gb` (2). Either is
 said once, after the game: in the window if it is open, else as a Windows notification.
 Nothing is ever shown during a game.
+
+`library_dir` keeps the library somewhere else, on a local fixed drive: for example
+`library_dir = 'D:\RiftReel'` puts the match folders in `D:\RiftReel\League of Legends`
+and the index, imports and cleanup notes beside them. The free-space guard and the
+cleanup then watch that drive. Settings, logs and the window's data stay where they are.
+Quit RiftReel and move the library's folder first; a folder that can't be used (not a
+full path, a missing, removable or network drive) leaves the default in place and the
+window says why. The Storage view shows where the library is.
 
 The cleanup is off until turned on (`cleanup`, or the Storage view). Then, after each
 match and every hour, never during a game, full-match videos older than `keep_days` (30)

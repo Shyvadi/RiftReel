@@ -1,4 +1,5 @@
-//! Free space on the drive a folder is on (doc 03 §8: the low-disk guard, the janitor).
+//! Free space on the drive a folder is on (doc 03 §8: the low-disk guard, the janitor),
+//! and whether a drive suits the library.
 
 use std::path::Path;
 
@@ -9,6 +10,12 @@ const GB: u64 = 1_000_000_000;
 pub fn free_space(path: &Path) -> Option<u64> {
     let existing = path.ancestors().find(|p| p.exists())?;
     imp::free_space(existing)
+}
+
+/// Whether `path` is on a local, fixed drive (not a removable, network or optical one),
+/// so a library there is always present. `Err` says what it is instead.
+pub fn local_fixed_drive(path: &Path) -> Result<(), String> {
+    imp::local_fixed_drive(path)
 }
 
 /// `bytes` as gigabytes for messages (`12.3 GB`).
@@ -27,10 +34,30 @@ pub fn bytes_of_gb(gb: f64) -> u64 {
 
 #[cfg(windows)]
 mod imp {
-    use std::path::Path;
+    use std::path::{Component, Path, PathBuf};
 
     use windows::core::HSTRING;
-    use windows::Win32::Storage::FileSystem::GetDiskFreeSpaceExW;
+    use windows::Win32::Storage::FileSystem::{GetDiskFreeSpaceExW, GetDriveTypeW};
+
+    pub fn local_fixed_drive(path: &Path) -> Result<(), String> {
+        // The drive's root, `D:\` or `\\server\share\`: what GetDriveTypeW asks for.
+        let root: PathBuf = path
+            .components()
+            .take_while(|c| matches!(c, Component::Prefix(_) | Component::RootDir))
+            .collect();
+        // SAFETY: a valid string for the call.
+        let kind = unsafe { GetDriveTypeW(&HSTRING::from(root.as_os_str())) };
+        // DRIVE_* values (winbase.h).
+        match kind {
+            3 => Ok(()),
+            1 => Err("that drive isn't there".into()),
+            2 => Err("it is on a removable drive".into()),
+            4 => Err("it is on a network drive".into()),
+            5 => Err("it is on a CD or DVD drive".into()),
+            6 => Err("it is on a RAM disk".into()),
+            _ => Err("its drive is of an unknown kind".into()),
+        }
+    }
 
     pub fn free_space(path: &Path) -> Option<u64> {
         let mut available = 0u64;
@@ -55,6 +82,10 @@ mod imp {
     pub fn free_space(_path: &Path) -> Option<u64> {
         None
     }
+
+    pub fn local_fixed_drive(_path: &Path) -> Result<(), String> {
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -71,6 +102,22 @@ mod tests {
             let later = free_space(&here.join("riftreel-not-made").join("yet")).unwrap();
             // The same drive (other programs may write in between).
             assert!(later.abs_diff(free) < 1_000_000_000, "{later} vs {free}");
+        }
+    }
+
+    #[test]
+    fn the_temp_folder_is_on_a_local_fixed_drive_and_a_missing_drive_is_not() {
+        assert_eq!(local_fixed_drive(&std::env::temp_dir()), Ok(()));
+        if cfg!(windows) {
+            let missing = ('D'..='Z')
+                .rev()
+                .map(|letter| format!("{letter}:\\"))
+                .find(|root| !Path::new(root).exists())
+                .expect("a free drive letter");
+            assert_eq!(
+                local_fixed_drive(&Path::new(&missing).join("RiftReel")),
+                Err("that drive isn't there".to_owned())
+            );
         }
     }
 
