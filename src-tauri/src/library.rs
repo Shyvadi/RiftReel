@@ -394,7 +394,10 @@ impl Library {
         };
         ClipCard {
             path: full(CLIPS_DIR, &row.file),
-            thumbnail_path: row.thumbnail.as_deref().and_then(|file| full(THUMBS_DIR, file)),
+            thumbnail_path: row
+                .thumbnail
+                .as_deref()
+                .and_then(|file| full(THUMBS_DIR, file)),
             match_id: row.match_id,
             file: row.file,
             label: row.label,
@@ -1291,8 +1294,32 @@ mod tests {
         let root = temp_dir("clippage");
         let matches = root.join("matches");
         // Two clips, the first a favorite; no files on disk.
-        write_match(&matches, "old", 1_000, "Ahri", None, Some("win"), 5, 600.0, &[], 2, true);
-        write_match(&matches, "none", 1_500, "Zed", None, None, 1, 600.0, &[], 0, true);
+        write_match(
+            &matches,
+            "old",
+            1_000,
+            "Ahri",
+            None,
+            Some("win"),
+            5,
+            600.0,
+            &[],
+            2,
+            true,
+        );
+        write_match(
+            &matches,
+            "none",
+            1_500,
+            "Zed",
+            None,
+            None,
+            1,
+            600.0,
+            &[],
+            0,
+            true,
+        );
         // The newest match's clip has its file and picture.
         let dir = matches.join("new");
         std::fs::create_dir_all(dir.join(CLIPS_DIR)).unwrap();
@@ -1322,25 +1349,52 @@ mod tests {
         );
         let newest = &page.items[0];
         assert_eq!(newest.champion.as_deref(), Some("Shyvana"));
-        assert_eq!((newest.label.as_str(), newest.from_s, newest.to_s), ("double_kill", 50.0, 70.0));
-        let path = |folder: &str, file: &str| Some(dir.join(folder).join(file).display().to_string());
+        assert_eq!(
+            (newest.label.as_str(), newest.from_s, newest.to_s),
+            ("double_kill", 50.0, 70.0)
+        );
+        let path =
+            |folder: &str, file: &str| Some(dir.join(folder).join(file).display().to_string());
         assert_eq!(newest.path, path(CLIPS_DIR, "0001_double_kill.mp4"));
         assert_eq!(newest.thumbnail_path, path(THUMBS_DIR, "0001.jpg"));
         assert!(page.items[1].path.is_none(), "its file isn't there");
 
-        let oldest = ClipQuery { oldest: true, ..ClipQuery::default() };
-        assert_eq!(library.clips(&oldest).unwrap().items[0].file, "clips/0001_kill.mp4");
+        let oldest = ClipQuery {
+            oldest: true,
+            ..ClipQuery::default()
+        };
+        assert_eq!(
+            library.clips(&oldest).unwrap().items[0].file,
+            "clips/0001_kill.mp4"
+        );
         let favorites = library
-            .clips(&ClipQuery { favorites: true, ..ClipQuery::default() })
-            .unwrap();
-        assert_eq!((favorites.total, favorites.items[0].match_id.as_str()), (1, "old"));
-        let ahri = ClipQuery { champion: Some("Ahri".into()), ..ClipQuery::default() };
-        assert_eq!(library.clips(&ahri).unwrap().total, 2);
-        let second = library
-            .clips(&ClipQuery { offset: 1, limit: 1, ..ClipQuery::default() })
+            .clips(&ClipQuery {
+                favorites: true,
+                ..ClipQuery::default()
+            })
             .unwrap();
         assert_eq!(
-            (second.total, second.items.len(), second.items[0].file.as_str()),
+            (favorites.total, favorites.items[0].match_id.as_str()),
+            (1, "old")
+        );
+        let ahri = ClipQuery {
+            champion: Some("Ahri".into()),
+            ..ClipQuery::default()
+        };
+        assert_eq!(library.clips(&ahri).unwrap().total, 2);
+        let second = library
+            .clips(&ClipQuery {
+                offset: 1,
+                limit: 1,
+                ..ClipQuery::default()
+            })
+            .unwrap();
+        assert_eq!(
+            (
+                second.total,
+                second.items.len(),
+                second.items[0].file.as_str()
+            ),
             (3, 1, "clips/0002_kill.mp4")
         );
         std::fs::remove_dir_all(&root).ok();

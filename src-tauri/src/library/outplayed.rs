@@ -1016,10 +1016,8 @@ mod tests {
             assert!(!is_match_key(&key), "{key}");
         }
 
-        let dir = std::env::temp_dir().join(format!(
-            "riftreel-outplayed-export-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("riftreel-outplayed-export-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let file = dir.join("outplayed.json");
         std::fs::write(&file, export()).unwrap();
@@ -1117,8 +1115,7 @@ mod tests {
 
     #[test]
     fn videos_are_imported_by_reference_once_and_never_touched() {
-        let base =
-            std::env::temp_dir().join(format!("riftreel-outplayed-{}", std::process::id()));
+        let base = std::env::temp_dir().join(format!("riftreel-outplayed-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&base);
         let root = base.join("Outplayed");
         outplayed(&root);
@@ -1213,10 +1210,8 @@ mod tests {
 
     #[test]
     fn the_cleanup_leaves_imports_alone_unless_allowed_for_them() {
-        let base = std::env::temp_dir().join(format!(
-            "riftreel-outplayed-janitor-{}",
-            std::process::id()
-        ));
+        let base =
+            std::env::temp_dir().join(format!("riftreel-outplayed-janitor-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&base);
         let root = base.join("Outplayed");
         outplayed(&root);

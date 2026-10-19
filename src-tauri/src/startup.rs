@@ -37,7 +37,15 @@ pub fn registered() -> io::Result<Option<String>> {
     let mut bytes = 0u32;
     // SAFETY: valid strings; this call only asks for the size.
     let status = unsafe {
-        RegGetValueW(HKEY_CURRENT_USER, &key, &value, RRF_RT_REG_SZ, None, None, Some(&mut bytes))
+        RegGetValueW(
+            HKEY_CURRENT_USER,
+            &key,
+            &value,
+            RRF_RT_REG_SZ,
+            None,
+            None,
+            Some(&mut bytes),
+        )
     };
     if status == ERROR_FILE_NOT_FOUND {
         return Ok(None);
@@ -57,7 +65,10 @@ pub fn registered() -> io::Result<Option<String>> {
         )
     };
     status.ok().map_err(io::Error::other)?;
-    let end = text.iter().position(|&unit| unit == 0).unwrap_or(text.len());
+    let end = text
+        .iter()
+        .position(|&unit| unit == 0)
+        .unwrap_or(text.len());
     Ok(Some(String::from_utf16_lossy(&text[..end])))
 }
 
@@ -101,7 +112,10 @@ pub fn registered() -> io::Result<Option<String>> {
 
 #[cfg(not(windows))]
 pub fn set(_enabled: bool, _exe: &Path) -> io::Result<()> {
-    Err(io::Error::new(io::ErrorKind::Unsupported, "starting with Windows needs Windows"))
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "starting with Windows needs Windows",
+    ))
 }
 
 #[cfg(test)]
